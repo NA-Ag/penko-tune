@@ -5,7 +5,7 @@
 Inspired by the freedom and quality of VLC, Penko-tune aims to democratize access to music platforms while providing users with an exceptional listening experience. We empower artists with the tools necessary to build and control their platforms in a completely independent manner—no middlemen, no platform fees, no compromises.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](UPGRADE_PROPOSAL.md)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
@@ -37,10 +37,12 @@ Inspired by the freedom and quality of VLC, Penko-tune aims to democratize acces
 
 ### Professional Audio Tools
 - **10-Band Equalizer** - Fine-tune your sound with professional-grade EQ
-- **4 Visualizer Modes** - Bars, wave/mandala, circle, spiral
+- **8 Visualizer Modes** - Bars, spectrum, wave, circle, spiral, particles, rings, DNA helix
 - **Audio Controls** - Volume, shuffle, repeat, playback rate
 - **Keyboard Shortcuts** - Full keyboard navigation for power users
 - **Gesture Controls** - Swipe, double-tap, hold for 2x speed
+- **Chapter Markers** - Bookmark specific moments in tracks
+- **Playlist Management** - Create and organize custom playlists
 
 ### Privacy & Freedom
 - **Zero Tracking** - No analytics, cookies, or surveillance
@@ -74,7 +76,7 @@ npm run dev
 
 **That's it!** No API keys, no sign-up, no configuration needed.
 
-> **Note:** YouTube streaming requires a deployed version due to CORS restrictions. When deployed on GitHub Pages, Vercel, Netlify, etc., the feature works automatically with privacy-focused Piped/Invidious APIs. See [UPGRADE_PROPOSAL.md](UPGRADE_PROPOSAL.md) for deployment guides.
+> **Note:** YouTube streaming requires a deployed version due to CORS restrictions. When deployed on GitHub Pages, Vercel, Netlify, etc., the feature works automatically with privacy-focused Piped/Invidious APIs. See [DEPLOYMENT.md](DEPLOYMENT.md) for deployment guides.
 
 ### Deployment (YouTube Streaming Enabled)
 
@@ -98,20 +100,45 @@ Once deployed, all features including YouTube ad-free streaming are fully functi
 
 ## Roadmap
 
-See **[UPGRADE_PROPOSAL.md](UPGRADE_PROPOSAL.md)** for the full vision:
-- WebTorrent/IPFS music distribution
-- Crypto payments (Lightning, Monero, Ethereum L2)
-- Mastodon-style federation
-- Plugin ecosystem
-- Artist platform (zero platform fees!)
+See **[ROADMAP.md](ROADMAP.md)** for the complete alpha to beta transition plan:
 
-**Goal:** A true Spotify alternative that's free, open, and artist-owned.
+**Phase 1: Production Polish & Deployment**
+- GitHub Actions auto-deployment
+- Custom domain configuration
+- PWA enhancements
+- Community infrastructure
+
+**Phase 2: Decentralized Distribution**
+- WebTorrent P2P music sharing
+- Artist upload interface
+- Magnet link playback
+
+**Phase 3: Permanent Storage**
+- IPFS integration for censorship-resistant storage
+- Cover art and metadata on IPFS
+
+**Phase 4: Direct Artist Payments**
+- Lightning Network micropayments
+- Monero privacy donations
+- Ethereum L2 royalty splits
+
+**Phase 5: Plugin System**
+- Extensible plugin architecture
+- Community marketplace
+- Last.fm scrobbler, lyrics, Discord integration
+
+**Phase 6: Decentralized Federation**
+- ActivityPub-lite social features
+- Artist discovery and following
+- Collaborative playlists
+
+**Goal:** A true Spotify alternative that's free, open-source, and artist-owned.
 
 ---
 
 ## License
 
-GPL v3 - See [LICENSE](LICENSE) for details.
+GPL v3 - See [LICENSE.md](LICENSE.md) for details.
 
 **Why GPL v3?** Keeps Penko-tune free forever, prevents corporate takeovers.
 
@@ -119,8 +146,8 @@ GPL v3 - See [LICENSE](LICENSE) for details.
 
 ## Contributing
 
-PRs welcome! Check out the [UPGRADE_PROPOSAL.md](UPGRADE_PROPOSAL.md) for ideas.
+PRs welcome! Check out the [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [ROADMAP.md](ROADMAP.md) for feature ideas.
 
 ---
 
-**Built by the community. Music for the people, by the people.**
+
