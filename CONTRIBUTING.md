@@ -238,4 +238,4 @@ Good first issues will be labeled `good-first-issue`.
 
 **Let's build the future of music together!
 
-**Music for the people, by the people.**
+**Music for everyone.**
