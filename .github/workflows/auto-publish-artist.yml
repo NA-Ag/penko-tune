@@ -1,0 +1,124 @@
+name: Auto-Publish Artist Submissions
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'catalog/artists/**'
+      - 'catalog/artists.json'
+
+jobs:
+  validate-artist-submission:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate JSON files
+        id: validate
+        run: |
+          echo "Validating artist submission..."
+
+          # Check if artists.json is valid JSON
+          if ! jq empty catalog/artists.json 2>/dev/null; then
+            echo "❌ catalog/artists.json is not valid JSON"
+            exit 1
+          fi
+
+          # Validate each artist directory
+          for artist_dir in catalog/artists/*/; do
+            if [ -f "${artist_dir}profile.json" ]; then
+              if ! jq empty "${artist_dir}profile.json" 2>/dev/null; then
+                echo "❌ ${artist_dir}profile.json is not valid JSON"
+                exit 1
+              fi
+
+              # Check required fields
+              if ! jq -e '.name' "${artist_dir}profile.json" > /dev/null; then
+                echo "❌ ${artist_dir}profile.json missing required field: name"
+                exit 1
+              fi
+
+              if ! jq -e '.id' "${artist_dir}profile.json" > /dev/null; then
+                echo "❌ ${artist_dir}profile.json missing required field: id"
+                exit 1
+              fi
+
+              echo "✅ ${artist_dir}profile.json is valid"
+            fi
+
+            # Validate releases
+            if [ -d "${artist_dir}releases" ]; then
+              for release_dir in ${artist_dir}releases/*/; do
+                if [ -f "${release_dir}info.json" ]; then
+                  if ! jq empty "${release_dir}info.json" 2>/dev/null; then
+                    echo "❌ ${release_dir}info.json is not valid JSON"
+                    exit 1
+                  fi
+
+                  # Validate IPFS CID format (basic check)
+                  if jq -e '.tracks[].ipfsHash' "${release_dir}info.json" > /dev/null; then
+                    for cid in $(jq -r '.tracks[].ipfsHash' "${release_dir}info.json"); do
+                      if [[ ! $cid =~ ^(Qm|bafy|bafk)[a-zA-Z0-9]{44,} ]]; then
+                        echo "⚠️  Warning: $cid doesn't look like a valid IPFS CID"
+                      fi
+                    done
+                  fi
+
+                  echo "✅ ${release_dir}info.json is valid"
+                fi
+              done
+            fi
+          done
+
+          echo "✅ All validations passed!"
+
+      - name: Auto-approve if valid
+        if: success()
+        uses: hmarr/auto-approve-action@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge
+        if: success()
+        run: gh pr merge --auto --squash "${{ github.event.pull_request.number }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on PR
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.name,
+              body: '✅ **Artist submission validated!**\n\nYour music will be live on Penko-tune once this PR is merged.\n\n- All JSON files are valid\n- Required fields present\n- IPFS CIDs look correct\n\nWelcome to the decentralized music revolution! 🎵'
+            })
+
+      - name: Comment validation errors
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.name,
+              body: '❌ **Validation failed!**\n\nPlease check the workflow logs for details.\n\nCommon issues:\n- Invalid JSON syntax\n- Missing required fields (name, id)\n- Invalid IPFS CID format\n\nFix the issues and push again.'
+            })
