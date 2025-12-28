@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Unregister Service Workers - Penko-tune</title>
+    <style>
+        body {
+            font-family: system-ui;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #0a0a0a;
+            color: #fff;
+        }
+        button {
+            background: #ff0000;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #cc0000;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            background: #1a1a1a;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Service Worker Cleanup</h1>
+    <p>This page will unregister all service workers that might be interfering with Penko-tune.</p>
+    <button onclick="unregisterAll()">Unregister All Service Workers</button>
+    <div id="status"></div>
+
+    <script>
+        async function unregisterAll() {
+            const status = document.getElementById('status');
+
+            if ('serviceWorker' in navigator) {
+                try {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+
+                    if (registrations.length === 0) {
+                        status.innerHTML = '✅ No service workers found';
+                        return;
+                    }
+
+                    for (const registration of registrations) {
+                        await registration.unregister();
+                        console.log('Unregistered:', registration);
+                    }
+
+                    status.innerHTML = `✅ Successfully unregistered ${registrations.length} service worker(s).<br><br>Please close this tab and hard refresh Penko-tune (Ctrl+Shift+R or Cmd+Shift+R).`;
+                } catch (err) {
+                    status.innerHTML = `❌ Error: ${err.message}`;
+                }
+            } else {
+                status.innerHTML = '⚠️ Service workers not supported';
+            }
+        }
+
+        // Auto-run on load
+        window.addEventListener('load', () => {
+            document.getElementById('status').innerHTML = 'Ready to unregister...';
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{
+  "name": "penko-tune",
+  "private": true,
+  "version": "0.1.0-alpha",
+  "type": "module",
+  "description": "Privacy-first, open-source music player - A true Spotify alternative",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NA-Ag/penko-tune"
+  },
+  "homepage": "https://tune.penkosoftware.org",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@helia/unixfs": "^6.0.4",
+    "@storacha/client": "^1.8.26",
+    "d3": "^7.9.0",
+    "helia": "^6.0.14",
+    "lucide-react": "^0.562.0",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "webtorrent": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "buffer": "^6.0.3",
+    "events": "^3.3.0",
+    "os-browserify": "^0.3.0",
+    "path-browserify": "^1.0.1",
+    "process": "^0.11.10",
+    "stream-browserify": "^3.0.0",
+    "typescript": "~5.8.2",
+    "util": "^0.12.5",
+    "vite": "^6.2.0"
+  }
+}
