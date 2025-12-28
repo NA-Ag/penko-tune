@@ -9,7 +9,7 @@ This roadmap outlines the path from the current alpha release to a production-re
 
 ## Alpha → Beta Transition Plan
 
-### Current Alpha Features ✅
+### Current Alpha Features
 - Local file playback (MP3, FLAC, WAV, OGG)
 - YouTube streaming (ad-free, privacy-focused via Piped/Invidious)
 - Network stream support (direct audio URLs)
@@ -51,7 +51,7 @@ This roadmap outlines the path from the current alpha release to a production-re
 
 **Deliverable:** Active community channels for feedback and contributions
 
-**Status:** Foundation for growth ⏳
+**Status:** Foundation for growth 
 **Time Estimate:** 1-2 weeks
 **Cost:** $0
 
@@ -93,7 +93,7 @@ Artists submit JSON catalogs via GitHub PR:
 ```
 
 **Deliverable:** Fully functional P2P music distribution
-**Status:** Critical path to artist independence 🎯
+**Status:** Critical path to artist independence 
 **Time Estimate:** 3-4 weeks
 **Cost:** $0
 
@@ -118,7 +118,7 @@ Content-addressed permanent storage ensures music never disappears, with no host
 - [ ] Create metadata standards
 
 **Deliverable:** Censorship-resistant permanent music storage
-**Status:** Enhances WebTorrent for long-term availability 📦
+**Status:** Enhances WebTorrent for long-term availability 
 **Time Estimate:** 2-3 weeks
 **Cost:** $0 (public gateways)
 
@@ -159,7 +159,7 @@ Content-addressed permanent storage ensures music never disappears, with no host
 - Automated band royalty splits
 
 **Deliverable:** Zero-fee direct artist payments
-**Status:** Core value proposition ⚡
+**Status:** Core value proposition 
 **Time Estimate:** 3-4 weeks
 **Cost:** ~$50 (smart contract deployment only)
 
@@ -193,7 +193,7 @@ interface PenkoPlugin {
 - [ ] Custom visualizers
 
 **Deliverable:** Extensible platform for community features
-**Status:** Enables unlimited community innovation 🔌
+**Status:** Enables unlimited community innovation 
 **Time Estimate:** 4-5 weeks
 **Cost:** $0
 
@@ -234,7 +234,7 @@ Artists update feeds via GitHub Actions:
 - [ ] Collaborative playlists
 
 **Deliverable:** Decentralized music social network
-**Status:** Competes with Spotify's social features 🌐
+**Status:** Competes with Spotify's social features 
 **Time Estimate:** 5-6 weeks
 **Cost:** $0
 
@@ -243,14 +243,14 @@ Artists update feeds via GitHub Actions:
 ## Beta Release Criteria
 
 ### Must-Have Features for Beta
-- ✅ Core player functionality (done)
-- ✅ YouTube streaming (done)
-- ⏳ WebTorrent P2P distribution
-- ⏳ Artist registry system
-- ⏳ Direct crypto payments
-- ⏳ Production deployment at tune.penkosoftware.org
-- ⏳ PWA installation working
-- ⏳ Mobile-optimized experience
+- Core player functionality (done)
+- YouTube streaming (done)
+- WebTorrent P2P distribution
+- Artist registry system
+- Direct crypto payments
+- Production deployment at tune.penkosoftware.org
+- PWA installation working
+- Mobile-optimized experience
 
 ### Quality Standards
 - [ ] Zero critical bugs
@@ -340,6 +340,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 - **GitHub**: [github.com/NA-Ag/penko-tune](https://github.com/NA-Ag/penko-tune)
 - **Discussions**: GitHub Discussions
-- **Website**: [tune.penkosoftware.org](https://tune.penkosoftware.org) (coming soon)
+- **Website**: [tune.penkosoftware.org](https://tune.penkosoftware.org)
 
-**Let's build a music platform that's truly by the people, for the people.**
