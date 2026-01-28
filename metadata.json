@@ -1,0 +1,5 @@
+{
+  "name": "Penko-tune",
+  "description": "A privacy-first, offline-capable, local music player inspired by the spirit of VLC and the design of modern streaming apps. No tracking, no ads, just your music.",
+  "requestFramePermissions": []
+}
