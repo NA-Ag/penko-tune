@@ -1,0 +1,8 @@
+{
+  "genres": [
+    { "id": "synthwave", "name": "Synthwave", "trackCount": 12 },
+    { "id": "lofi", "name": "Lo-Fi", "trackCount": 8 },
+    { "id": "ambient", "name": "Ambient", "trackCount": 5 },
+    { "id": "rock", "name": "Rock", "trackCount": 15 }
+  ]
+}

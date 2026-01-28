@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "genres": [
+    { "id": "rock", "name": "Rock", "description": "Rock music and subgenres", "trackCount": 0 },
+    { "id": "electronic", "name": "Electronic", "description": "Electronic, EDM, House, Techno", "trackCount": 0 },
+    { "id": "hip-hop", "name": "Hip-Hop", "description": "Hip-Hop, Rap, Trap", "trackCount": 0 },
+    { "id": "jazz", "name": "Jazz", "description": "Jazz, Blues, Soul", "trackCount": 0 },
+    { "id": "classical", "name": "Classical", "description": "Classical, Orchestra, Chamber", "trackCount": 0 },
+    { "id": "folk", "name": "Folk", "description": "Folk, Acoustic, Singer-Songwriter", "trackCount": 0 },
+    { "id": "metal", "name": "Metal", "description": "Metal and subgenres", "trackCount": 0 },
+    { "id": "indie", "name": "Indie", "description": "Independent, Alternative", "trackCount": 0 },
+    { "id": "ambient", "name": "Ambient", "description": "Ambient, Experimental, Drone", "trackCount": 0 },
+    { "id": "world", "name": "World", "description": "World music, Traditional", "trackCount": 0 }
+  ]
+}
