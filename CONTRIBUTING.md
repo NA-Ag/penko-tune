@@ -15,7 +15,7 @@ Thank you for your interest in contributing! Penko-tune is built by the communit
 ### 2.  Suggest Features
 - Open an issue with the "enhancement" label
 - Explain the use case
-- Check [UPGRADE_PROPOSAL.md](UPGRADE_PROPOSAL.md) first
+- Check [ROADMAP.md](ROADMAP.md) first
 
 ### 3.  Submit Code
 - Fork the repo
@@ -73,7 +73,7 @@ npm run build
 
 ### Commit Messages
 ```
-feat: Add Lightning payment integration
+feat: Add ID3 tag reading
 fix: Resolve equalizer reset bug
 docs: Update deployment guide
 refactor: Simplify audio context initialization
@@ -118,13 +118,12 @@ Brief description of changes
 
 ## Priority Areas
 
-See [UPGRADE_PROPOSAL.md](UPGRADE_PROPOSAL.md) for full roadmap.
+See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 
 ### High Priority
-- WebTorrent integration
-- IPFS upload support
-- Lightning payment integration
-- Plugin system MVP
+- Reading tags and cover art from audio files
+- Library search, sorting, album/artist views
+- Encrypted peer-to-peer track & playlist sharing
 
 ### Medium Priority
 - Additional visualizers

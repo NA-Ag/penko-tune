@@ -1,22 +1,34 @@
-// IndexedDB utilities for optional music library persistence
+// IndexedDB / localStorage persistence for the music library, playlists, markers and EQ.
+import type { Track, Playlist, ChapterMarker, EQBand, LinkedFolder, OutgoingShare } from '../types';
+import { EQ_FREQUENCIES } from './audio';
 
 const DB_NAME = 'penko-tune-library';
 const TRACK_STORE_NAME = 'tracks';
 const PLAYLIST_STORE_NAME = 'playlists';
 const MARKER_STORE_NAME = 'markers';
-const DB_VERSION = 3;
+const FOLDER_STORE_NAME = 'folders';
+const SHARE_STORE_NAME = 'shares';
+const DB_VERSION = 4;
 
-interface StoredTrack {
-  id: string;
-  name: string;
-  artist?: string;
-  album?: string;
-  duration?: number;
-  type: 'local' | 'stream';
-  coverArtUrl?: string;
+const STORES = [TRACK_STORE_NAME, PLAYLIST_STORE_NAME, MARKER_STORE_NAME, FOLDER_STORE_NAME, SHARE_STORE_NAME] as const;
+type StoreName = typeof STORES[number];
+
+// Everything except the runtime-only File/URL, which are rebuilt on load.
+// Copied tracks keep the audio in `fileBlob`; linked tracks keep only `fileHandle`.
+type StoredTrack = Omit<Track, 'file' | 'url'> & {
   fileBlob?: Blob;
   streamUrl?: string;
-}
+};
+
+const MIME_TYPES: Record<string, string> = {
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  webm: 'audio/webm',
+};
 
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -25,525 +37,304 @@ const openDB = (): Promise<IDBDatabase> => {
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
 
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(TRACK_STORE_NAME)) {
-        db.createObjectStore(TRACK_STORE_NAME, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains(PLAYLIST_STORE_NAME)) {
-        db.createObjectStore(PLAYLIST_STORE_NAME, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains(MARKER_STORE_NAME)) {
-        db.createObjectStore(MARKER_STORE_NAME, { keyPath: 'id' });
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      for (const name of STORES) {
+        if (!db.objectStoreNames.contains(name)) {
+          db.createObjectStore(name, { keyPath: 'id' });
+        }
       }
     };
   });
 };
 
-const waitForTx = (tx: IDBTransaction): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-};
-
-export const saveTracksToIndexedDB = async (tracks: any[]): Promise<void> => {
+/** Read every record from a store. */
+const getAll = async <T>(storeName: StoreName): Promise<T[]> => {
+  const db = await openDB();
   try {
-    const db = await openDB();
-    const tx = db.transaction(TRACK_STORE_NAME, 'readwrite');
-    const store = tx.objectStore(TRACK_STORE_NAME);
-
-    // Clear old tracks
-    await store.clear();
-
-    // Save new tracks
-    for (const track of tracks) {
-      const storedTrack: StoredTrack = {
-        id: track.id,
-        name: track.name,
-        artist: track.artist,
-        album: track.album,
-        duration: track.duration,
-        type: track.type,
-        coverArtUrl: track.coverArtUrl,
-        fileBlob: track.file, // Store the File/Blob object
-        streamUrl: track.type === 'stream' ? track.url : undefined
-      };
-
-      await store.add(storedTrack);
-    }
-
-    await waitForTx(tx);
-    db.close();
-  } catch (error) {
-    console.error('Failed to save tracks to IndexedDB:', error);
-    throw error;
-  }
-};
-
-export const loadTracksFromIndexedDB = async (): Promise<any[]> => {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(TRACK_STORE_NAME, 'readonly');
-    const store = tx.objectStore(TRACK_STORE_NAME);
-
-    const storedTracks = await new Promise<StoredTrack[]>((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result);
+    return await new Promise<T[]>((resolve, reject) => {
+      const request = db.transaction(storeName, 'readonly').objectStore(storeName).getAll();
+      request.onsuccess = () => resolve(request.result as T[]);
       request.onerror = () => reject(request.error);
     });
-
+  } finally {
     db.close();
-
-    console.log(`[Persistence] Loading ${storedTracks.length} tracks from IndexedDB...`);
-
-    // Reconstruct Track objects with fresh blob URLs
-    const tracks = storedTracks.map((stored, index) => {
-      // Use the stored ID to maintain playlist references
-      const trackId = stored.id;
-
-      if (stored.type === 'local' && stored.fileBlob) {
-        const blob = stored.fileBlob;
-
-        // Determine MIME type
-        let mimeType = blob.type;
-        if (!mimeType || mimeType === '') {
-          const ext = stored.name.split('.').pop()?.toLowerCase();
-          const mimeTypes: Record<string, string> = {
-            'mp3': 'audio/mpeg',
-            'wav': 'audio/wav',
-            'ogg': 'audio/ogg',
-            'flac': 'audio/flac',
-            'm4a': 'audio/mp4',
-            'aac': 'audio/aac',
-            'webm': 'audio/webm'
-          };
-          mimeType = mimeTypes[ext || 'mp3'] || 'audio/mpeg';
-        }
-
-        // Create a fresh Blob with correct MIME type
-        const freshBlob = new Blob([blob], { type: mimeType });
-
-        // Create File from Blob
-        const file = new File([freshBlob], stored.name, {
-          type: mimeType,
-          lastModified: Date.now()
-        });
-
-        // Create blob URL immediately - same as when first adding files
-        const blobUrl = URL.createObjectURL(file);
-
-        console.log(`[Persistence] Loaded: ${stored.name} | Type: ${mimeType} | Size: ${blob.size} bytes`);
-        console.log(`[Persistence] -> Created blob URL: ${blobUrl}`);
-
-        return {
-          id: trackId,
-          name: stored.name,
-          artist: stored.artist || 'Local File',
-          album: stored.album,
-          duration: stored.duration,
-          type: 'local' as const,
-          file: file,
-          url: blobUrl, // Same as when adding files - create blob URL from File
-          coverArtUrl: stored.coverArtUrl
-        };
-      } else if (stored.type === 'stream' && stored.streamUrl) {
-        console.log(`[Persistence] Loaded stream: ${stored.name}`);
-        return {
-          id: trackId,
-          name: stored.name,
-          artist: stored.artist,
-          album: stored.album,
-          duration: stored.duration,
-          type: 'stream' as const,
-          url: stored.streamUrl,
-          coverArtUrl: stored.coverArtUrl
-        };
-      }
-      return null;
-    }).filter(Boolean);
-
-    console.log(`[Persistence] Successfully loaded ${tracks.length} tracks`);
-    return tracks;
-  } catch (error) {
-    console.error('Failed to load tracks from IndexedDB:', error);
-    throw error;
   }
 };
 
-export const clearLibrary = async (): Promise<void> => {
+/**
+ * Write records to a store in a single transaction.
+ * With `replace`, the store is cleared first; because it is the same transaction,
+ * a failed write rolls the clear back instead of leaving the store empty.
+ */
+const putAll = async <T>(storeName: StoreName, records: T[], replace: boolean): Promise<void> => {
+  const db = await openDB();
   try {
-    const db = await openDB();
-    const tx = db.transaction(TRACK_STORE_NAME, 'readwrite');
-    await tx.objectStore(TRACK_STORE_NAME).clear();
-    await waitForTx(tx);
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      if (replace) store.clear();
+      for (const record of records) store.put(record);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
     db.close();
-  } catch (error) {
-    console.error('Failed to clear library:', error);
-    throw error;
   }
 };
 
-export const getLibrarySize = async (): Promise<number> => {
+// --- Tracks ---
+
+const toStoredTrack = ({ file, url, ...rest }: Track): StoredTrack => ({
+  ...rest,
+  // Never copy a linked file's audio into the browser: that is what linking avoids
+  fileBlob: rest.fileHandle ? undefined : file,
+  streamUrl: rest.type === 'stream' ? url : undefined,
+});
+
+const fromStoredTrack = ({ fileBlob, streamUrl, ...rest }: StoredTrack): Track | null => {
+  if (rest.type === 'local' && fileBlob) {
+    const ext = rest.name.split('.').pop()?.toLowerCase() ?? '';
+    const mimeType = fileBlob.type || MIME_TYPES[ext] || 'audio/mpeg';
+    const file = fileBlob instanceof File && fileBlob.type
+      ? fileBlob
+      : new File([fileBlob], rest.name, { type: mimeType, lastModified: Date.now() });
+
+    return { ...rest, artist: rest.artist || 'Local File', file, url: URL.createObjectURL(file) };
+  }
+
+  // Linked: the file is re-read from disk once folder permission is (re)granted
+  if (rest.type === 'local' && rest.fileHandle) {
+    return { ...rest, url: '' };
+  }
+
+  // ipfs:// entries came from the removed IPFS catalog and can no longer be played
+  if (rest.type === 'stream' && streamUrl && !streamUrl.startsWith('ipfs://')) {
+    return { ...rest, url: streamUrl };
+  }
+
+  return null;
+};
+
+/** Replace the stored library with `tracks`. Tracks received through share links are skipped. */
+export const saveTracksToIndexedDB = (tracks: Track[]): Promise<void> =>
+  putAll(TRACK_STORE_NAME, tracks.filter(t => !t.incomingShareId).map(toStoredTrack), true);
+
+/** Add or overwrite tracks without touching the rest of the library (used by imports). */
+export const mergeTracksIntoIndexedDB = (tracks: Track[]): Promise<void> =>
+  putAll(TRACK_STORE_NAME, tracks.map(toStoredTrack), false);
+
+export const loadTracksFromIndexedDB = async (): Promise<Track[]> => {
+  const storedTracks = await getAll<StoredTrack>(TRACK_STORE_NAME);
+  return storedTracks.map(fromStoredTrack).filter((t): t is Track => t !== null);
+};
+
+// --- Playlists & Markers ---
+
+export const savePlaylists = (playlists: Playlist[]): Promise<void> =>
+  putAll(PLAYLIST_STORE_NAME, playlists, true);
+
+export const loadPlaylists = (): Promise<Playlist[]> => getAll<Playlist>(PLAYLIST_STORE_NAME);
+
+export const saveMarkers = (markers: ChapterMarker[]): Promise<void> =>
+  putAll(MARKER_STORE_NAME, markers, true);
+
+export const loadMarkers = (): Promise<ChapterMarker[]> => getAll<ChapterMarker>(MARKER_STORE_NAME);
+
+export const mergePlaylists = (playlists: Playlist[]): Promise<void> =>
+  putAll(PLAYLIST_STORE_NAME, playlists, false);
+
+export const mergeMarkers = (markers: ChapterMarker[]): Promise<void> =>
+  putAll(MARKER_STORE_NAME, markers, false);
+
+// --- Linked folders & outgoing shares ---
+
+export const loadFolders = (): Promise<LinkedFolder[]> => getAll<LinkedFolder>(FOLDER_STORE_NAME);
+export const saveFolders = (folders: LinkedFolder[]): Promise<void> => putAll(FOLDER_STORE_NAME, folders, true);
+
+export const loadShares = (): Promise<OutgoingShare[]> => getAll<OutgoingShare>(SHARE_STORE_NAME);
+export const saveShares = (shares: OutgoingShare[]): Promise<void> => putAll(SHARE_STORE_NAME, shares, true);
+
+// --- EQ (localStorage) ---
+
+const EQ_SETTINGS_KEY = 'eq-settings';
+const EQ_PRESETS_KEY = 'eq-presets';
+
+const readJSON = <T>(key: string, fallback: T): T => {
   try {
-    if ('storage' in navigator && 'estimate' in navigator.storage) {
-      const estimate = await navigator.storage.estimate();
-      return estimate.usage || 0;
-    }
-    return 0;
-  } catch {
-    return 0;
-  }
-};
-
-export const isPersistenceEnabled = (): boolean => {
-  return localStorage.getItem('persistence-enabled') === 'true';
-};
-
-export const setPersistenceEnabled = (enabled: boolean): void => {
-  localStorage.setItem('persistence-enabled', enabled.toString());
-};
-
-// EQ Persistence
-export const saveEQSettings = (bands: any[]): void => {
-  try {
-    localStorage.setItem('eq-settings', JSON.stringify(bands));
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : fallback;
   } catch (error) {
-    console.error('Failed to save EQ settings:', error);
+    console.error(`Failed to read ${key}:`, error);
+    return fallback;
   }
 };
 
-export const loadEQSettings = (): any[] | null => {
+const writeJSON = (key: string, value: unknown): void => {
   try {
-    const saved = localStorage.getItem('eq-settings');
-    return saved ? JSON.parse(saved) : null;
+    localStorage.setItem(key, JSON.stringify(value));
   } catch (error) {
-    console.error('Failed to load EQ settings:', error);
-    return null;
+    console.error(`Failed to write ${key}:`, error);
   }
 };
 
-// EQ Presets
-interface EQPreset {
-  name: string;
-  bands: any[];
-}
+export const saveEQSettings = (bands: EQBand[]): void =>
+  writeJSON(EQ_SETTINGS_KEY, bands.map(({ frequency, gain }) => ({ frequency, gain })));
 
-export const saveEQPreset = (name: string, bands: any[]): void => {
-  try {
-    const presets = loadEQPresets();
-    presets[name] = bands;
-    localStorage.setItem('eq-presets', JSON.stringify(presets));
-  } catch (error) {
-    console.error('Failed to save EQ preset:', error);
-  }
+export const loadEQSettings = (): EQBand[] | null => {
+  const saved = readJSON<EQBand[] | null>(EQ_SETTINGS_KEY, null);
+  return Array.isArray(saved) && saved.length === EQ_FREQUENCIES.length ? saved : null;
 };
 
-export const loadEQPresets = (): Record<string, any[]> => {
-  try {
-    const saved = localStorage.getItem('eq-presets');
-    return saved ? JSON.parse(saved) : {};
-  } catch (error) {
-    console.error('Failed to load EQ presets:', error);
-    return {};
-  }
+export const loadEQPresets = (): Record<string, EQBand[]> => readJSON(EQ_PRESETS_KEY, {});
+
+export const saveEQPreset = (name: string, bands: EQBand[]): void => {
+  const presets = loadEQPresets();
+  presets[name] = bands.map(({ frequency, gain }) => ({ frequency, gain }));
+  writeJSON(EQ_PRESETS_KEY, presets);
 };
+
+export const saveEQPresets = (presets: Record<string, EQBand[]>): void => writeJSON(EQ_PRESETS_KEY, presets);
 
 export const deleteEQPreset = (name: string): void => {
-  try {
-    const presets = loadEQPresets();
-    delete presets[name];
-    localStorage.setItem('eq-presets', JSON.stringify(presets));
-  } catch (error) {
-    console.error('Failed to delete EQ preset:', error);
-  }
+  const presets = loadEQPresets();
+  delete presets[name];
+  writeJSON(EQ_PRESETS_KEY, presets);
 };
 
-// Built-in EQ presets
-export const getBuiltInPresets = (): Record<string, any[]> => {
-  return {
-    'Flat': [
-      { frequency: 60, gain: 0 },
-      { frequency: 170, gain: 0 },
-      { frequency: 310, gain: 0 },
-      { frequency: 600, gain: 0 },
-      { frequency: 1000, gain: 0 },
-      { frequency: 3000, gain: 0 },
-      { frequency: 6000, gain: 0 },
-      { frequency: 12000, gain: 0 },
-      { frequency: 14000, gain: 0 },
-      { frequency: 16000, gain: 0 }
-    ],
-    'Bass Boost': [
-      { frequency: 60, gain: 8 },
-      { frequency: 170, gain: 6 },
-      { frequency: 310, gain: 3 },
-      { frequency: 600, gain: 0 },
-      { frequency: 1000, gain: 0 },
-      { frequency: 3000, gain: 0 },
-      { frequency: 6000, gain: 0 },
-      { frequency: 12000, gain: 0 },
-      { frequency: 14000, gain: 0 },
-      { frequency: 16000, gain: 0 }
-    ],
-    'Treble Boost': [
-      { frequency: 60, gain: 0 },
-      { frequency: 170, gain: 0 },
-      { frequency: 310, gain: 0 },
-      { frequency: 600, gain: 0 },
-      { frequency: 1000, gain: 0 },
-      { frequency: 3000, gain: 0 },
-      { frequency: 6000, gain: 3 },
-      { frequency: 12000, gain: 6 },
-      { frequency: 14000, gain: 8 },
-      { frequency: 16000, gain: 8 }
-    ],
-    'Vocal Boost': [
-      { frequency: 60, gain: -2 },
-      { frequency: 170, gain: -1 },
-      { frequency: 310, gain: 2 },
-      { frequency: 600, gain: 4 },
-      { frequency: 1000, gain: 5 },
-      { frequency: 3000, gain: 4 },
-      { frequency: 6000, gain: 2 },
-      { frequency: 12000, gain: 0 },
-      { frequency: 14000, gain: 0 },
-      { frequency: 16000, gain: 0 }
-    ],
-    'Classical': [
-      { frequency: 60, gain: 0 },
-      { frequency: 170, gain: 0 },
-      { frequency: 310, gain: 0 },
-      { frequency: 600, gain: 0 },
-      { frequency: 1000, gain: 0 },
-      { frequency: 3000, gain: -2 },
-      { frequency: 6000, gain: -2 },
-      { frequency: 12000, gain: 0 },
-      { frequency: 14000, gain: 0 },
-      { frequency: 16000, gain: 3 }
-    ],
-    'Rock': [
-      { frequency: 60, gain: 6 },
-      { frequency: 170, gain: 4 },
-      { frequency: 310, gain: -2 },
-      { frequency: 600, gain: -3 },
-      { frequency: 1000, gain: -1 },
-      { frequency: 3000, gain: 2 },
-      { frequency: 6000, gain: 5 },
-      { frequency: 12000, gain: 7 },
-      { frequency: 14000, gain: 7 },
-      { frequency: 16000, gain: 7 }
-    ]
-  };
+const preset = (gains: number[]): EQBand[] =>
+  EQ_FREQUENCIES.map((frequency, i) => ({ frequency, gain: gains[i] }));
+
+const BUILT_IN_PRESETS: Record<string, EQBand[]> = {
+  'Flat':         preset([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+  'Bass Boost':   preset([8, 6, 3, 0, 0, 0, 0, 0, 0, 0]),
+  'Treble Boost': preset([0, 0, 0, 0, 0, 0, 3, 6, 8, 8]),
+  'Vocal Boost':  preset([-2, -1, 2, 4, 5, 4, 2, 0, 0, 0]),
+  'Classical':    preset([0, 0, 0, 0, 0, -2, -2, 0, 0, 3]),
+  'Rock':         preset([6, 4, -2, -3, -1, 2, 5, 7, 7, 7]),
 };
 
-// Playlist Persistence
-export const savePlaylists = async (playlists: any[]): Promise<void> => {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(PLAYLIST_STORE_NAME, 'readwrite');
-    const store = tx.objectStore(PLAYLIST_STORE_NAME);
-    await store.clear();
-    for (const playlist of playlists) {
-      await store.add(playlist);
-    }
-    await waitForTx(tx);
-    db.close();
-  } catch (error) {
-    console.error('Failed to save playlists to IndexedDB:', error);
-  }
-};
-
-export const loadPlaylists = async (): Promise<any[]> => {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(PLAYLIST_STORE_NAME, 'readonly');
-    const store = tx.objectStore(PLAYLIST_STORE_NAME);
-    const playlists = await new Promise<any[]>((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    db.close();
-    return playlists;
-  } catch (error) {
-    console.error('Failed to load playlists from IndexedDB:', error);
-    return [];
-  }
-};
-
-// Chapter Marker Persistence
-export const saveMarkers = async (markers: any[]): Promise<void> => {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(MARKER_STORE_NAME, 'readwrite');
-    const store = tx.objectStore(MARKER_STORE_NAME);
-    await store.clear();
-    for (const marker of markers) {
-      await store.add(marker);
-    }
-    await waitForTx(tx);
-    db.close();
-  } catch (error) {
-    console.error('Failed to save markers to IndexedDB:', error);
-  }
-};
-
-export const loadMarkers = async (): Promise<any[]> => {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(MARKER_STORE_NAME, 'readonly');
-    const store = tx.objectStore(MARKER_STORE_NAME);
-    const markers = await new Promise<any[]>((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    db.close();
-    return markers;
-  } catch (error) {
-    console.error('Failed to load markers from IndexedDB:', error);
-    return [];
-  }
-};
+export const getBuiltInPresets = (): Record<string, EQBand[]> => BUILT_IN_PRESETS;
 
 // --- Backup & Restore ---
 
-// Crypto Helpers
 const deriveKey = async (password: string, salt: Uint8Array): Promise<CryptoKey> => {
-  const enc = new TextEncoder();
-  const keyMaterial = await window.crypto.subtle.importKey(
-    "raw",
-    enc.encode(password),
-    { name: "PBKDF2" },
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    { name: 'PBKDF2' },
     false,
-    ["deriveKey"]
+    ['deriveKey']
   );
-  return window.crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: salt,
-      iterations: 100000,
-      hash: "SHA-256"
-    } as Pbkdf2Params,
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' } as Pbkdf2Params,
     keyMaterial,
-    { name: "AES-GCM", length: 256 },
+    { name: 'AES-GCM', length: 256 },
     false,
-    ["encrypt", "decrypt"]
+    ['encrypt', 'decrypt']
   );
 };
 
-const encryptData = async (data: string, password: string) => {
-  const salt = window.crypto.getRandomValues(new Uint8Array(16));
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+interface EncryptedPayload {
+  iv: number[];
+  salt: number[];
+  data: number[];
+}
+
+const encryptData = async (data: string, password: string): Promise<EncryptedPayload> => {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(password, salt);
-  const enc = new TextEncoder();
-  const encrypted = await window.crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: iv },
-    key,
-    enc.encode(data)
-  );
-  
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(data));
+
   return {
     iv: Array.from(iv),
     salt: Array.from(salt),
-    data: Array.from(new Uint8Array(encrypted))
+    data: Array.from(new Uint8Array(encrypted)),
   };
 };
 
-const decryptData = async (encryptedObj: any, password: string): Promise<string> => {
-  const salt = new Uint8Array(encryptedObj.salt);
-  const iv = new Uint8Array(encryptedObj.iv);
-  const data = new Uint8Array(encryptedObj.data);
-  const key = await deriveKey(password, salt);
-  
-  const decrypted = await window.crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: iv },
+const decryptData = async (payload: EncryptedPayload, password: string): Promise<string> => {
+  const key = await deriveKey(password, new Uint8Array(payload.salt));
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: new Uint8Array(payload.iv) },
     key,
-    data
+    new Uint8Array(payload.data)
   );
   return new TextDecoder().decode(decrypted);
 };
 
+interface BackupData {
+  version: number;
+  timestamp: number;
+  tracks: StoredTrack[];
+  playlists: Playlist[];
+  markers: ChapterMarker[];
+  eqSettings: EQBand[] | null;
+  eqPresets: Record<string, EQBand[]>;
+}
+
+/**
+ * Export library metadata as JSON (optionally AES-GCM encrypted).
+ * Local audio files are not included — only their metadata, so playlists and markers keep their references.
+ */
 export const exportLibraryAsJSON = async (password?: string): Promise<string> => {
-  try {
-    const [tracks, playlists, markers, eqSettings, eqPresets] = await Promise.all([
-      loadTracksFromIndexedDB(),
-      loadPlaylists(),
-      loadMarkers(),
-      Promise.resolve(loadEQSettings()),
-      Promise.resolve(loadEQPresets())
-    ]);
+  const [tracks, playlists, markers] = await Promise.all([
+    getAll<StoredTrack>(TRACK_STORE_NAME),
+    loadPlaylists(),
+    loadMarkers(),
+  ]);
 
-    // Filter out local file blobs to keep the backup portable and small
-    // We only keep metadata for local files, and full data for streams/P2P
-    const portableTracks = tracks.map(t => {
-      const { file, ...rest } = t; // Remove File object
-      // If it's a local blob URL, we can't export it, so we mark it
-      if (rest.type === 'local') {
-        return { ...rest, url: '' }; // Clear blob URL as it's session-specific
-      }
-      return rest;
-    });
+  const backupData: BackupData = {
+    version: 1,
+    timestamp: Date.now(),
+    tracks: tracks.map(({ fileBlob, ...rest }) => rest),
+    playlists,
+    markers,
+    eqSettings: loadEQSettings(),
+    eqPresets: loadEQPresets(),
+  };
 
-    const backupData = {
-      version: 1,
-      timestamp: Date.now(),
-      tracks: portableTracks,
-      playlists,
-      markers,
-      eqSettings,
-      eqPresets
-    };
+  const jsonString = JSON.stringify(backupData, null, 2);
+  if (!password) return jsonString;
 
-    const jsonString = JSON.stringify(backupData, null, 2);
-
-    if (password) {
-      const encrypted = await encryptData(jsonString, password);
-      return JSON.stringify({
-        isEncrypted: true,
-        version: 1,
-        payload: encrypted
-      });
-    }
-
-    return jsonString;
-  } catch (error) {
-    console.error('Export failed:', error);
-    throw new Error('Failed to export library');
-  }
+  return JSON.stringify({
+    isEncrypted: true,
+    version: 1,
+    payload: await encryptData(jsonString, password),
+  });
 };
 
+/**
+ * Merge a backup into the current library. Existing tracks are never removed;
+ * stream tracks from the backup are added, and playlists/markers are merged by id.
+ * Throws `PASSWORD_REQUIRED` / `INVALID_PASSWORD` for encrypted backups.
+ */
 export const importLibraryFromJSON = async (jsonString: string, password?: string): Promise<void> => {
-  try {
-    let data = JSON.parse(jsonString);
-    
-    if (data.isEncrypted) {
-      if (!password) throw new Error("PASSWORD_REQUIRED");
-      try {
-        const decryptedString = await decryptData(data.payload, password);
-        data = JSON.parse(decryptedString);
-      } catch (e) {
-        throw new Error("INVALID_PASSWORD");
-      }
-    }
-    
-    if (!data.version || !data.tracks) {
-      throw new Error('Invalid backup file format');
-    }
+  let data = JSON.parse(jsonString);
 
-    // Restore data
-    // Note: We don't clear existing data, we merge/overwrite
-    if (data.tracks.length > 0) await saveTracksToIndexedDB(data.tracks);
-    if (data.playlists?.length > 0) await savePlaylists(data.playlists);
-    if (data.markers?.length > 0) await saveMarkers(data.markers);
-    
-    if (data.eqSettings) saveEQSettings(data.eqSettings);
-    if (data.eqPresets) localStorage.setItem('eq-presets', JSON.stringify(data.eqPresets));
-
-    console.log('Library imported successfully');
-  } catch (error) {
-    console.error('Import failed:', error);
-    throw error;
+  if (data.isEncrypted) {
+    if (!password) throw new Error('PASSWORD_REQUIRED');
+    try {
+      data = JSON.parse(await decryptData(data.payload, password));
+    } catch {
+      throw new Error('INVALID_PASSWORD');
+    }
   }
+
+  if (!data.version || !Array.isArray(data.tracks)) {
+    throw new Error('Invalid backup file format');
+  }
+
+  const backup = data as BackupData;
+  // Local tracks in a backup carry no audio data, so only streams can be restored.
+  const streamTracks = backup.tracks.filter(t => t.type === 'stream' && t.streamUrl);
+
+  await putAll(TRACK_STORE_NAME, streamTracks, false);
+  if (backup.playlists?.length) await putAll(PLAYLIST_STORE_NAME, backup.playlists, false);
+  if (backup.markers?.length) await putAll(MARKER_STORE_NAME, backup.markers, false);
+
+  if (backup.eqSettings) saveEQSettings(backup.eqSettings);
+  if (backup.eqPresets) saveEQPresets(backup.eqPresets);
 };

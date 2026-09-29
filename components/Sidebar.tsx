@@ -1,10 +1,15 @@
 import React from 'react';
-import { Layout, FolderOpen, Plus, Image as ImageIcon, Download, Upload } from 'lucide-react';
+import { Layout, FolderOpen, Plus, Image as ImageIcon, X, Link2, Share2, Users, Copy, HardDrive, Loader2, AlertTriangle } from 'lucide-react';
+import type { OutgoingShare } from '../types';
+import type { IncomingState } from '../hooks/useSharing';
+import type { StorageStatus } from '../utils/storage';
+import { formatBytes } from '../utils/formatters';
 import { ViewMode, Playlist, Track, ChapterMarker } from '../types';
+import type { Translation } from '../translations';
 import { formatTime } from '../utils/formatters';
 
 interface SidebarProps {
-  t: any;
+  t: Translation;
   tracksCount: number;
   playlists: Playlist[];
   selectedPlaylist: string | null;
@@ -12,6 +17,9 @@ interface SidebarProps {
   newPlaylistName: string;
   currentTrack: Track | null;
   currentTrackMarkers: ChapterMarker[];
+  upNext: Track[];
+  onRemoveFromQueue: (index: number) => void;
+  onClearQueue: () => void;
   editingMarkerId: string | null;
   editingMarkerLabel: string;
   
@@ -28,8 +36,19 @@ interface SidebarProps {
   onSetEditingMarkerLabel: (label: string) => void;
   onJumpToMarker: (timestamp: number) => void;
   onDeleteMarker: (id: string) => void;
-  onBackupLibrary: () => void;
-  onRestoreLibrary: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  canLinkFolders: boolean;
+  onLinkFolder: () => void;
+  onSharePlaylist: (id: string) => void;
+  incoming: IncomingState[];
+  incomingTitles: Record<string, string>;
+  onCloseIncoming: (id: string) => void;
+  outgoing: OutgoingShare[];
+  peerCounts: Record<string, number>;
+  onCopyShareLink: (share: OutgoingShare) => void;
+  onStopShare: (id: string) => void;
+  storage: StorageStatus | null;
+  storageNeedsAttention: boolean;
+  onOpenStorage: () => void;
 }
 
 export function Sidebar({
@@ -41,6 +60,9 @@ export function Sidebar({
   newPlaylistName,
   currentTrack,
   currentTrackMarkers,
+  upNext,
+  onRemoveFromQueue,
+  onClearQueue,
   editingMarkerId,
   editingMarkerLabel,
   onSetSelectedPlaylist,
@@ -56,11 +78,22 @@ export function Sidebar({
   onSetEditingMarkerLabel,
   onJumpToMarker,
   onDeleteMarker,
-  onBackupLibrary,
-  onRestoreLibrary
+  canLinkFolders,
+  onLinkFolder,
+  onSharePlaylist,
+  incoming,
+  incomingTitles,
+  onCloseIncoming,
+  outgoing,
+  peerCounts,
+  onCopyShareLink,
+  onStopShare,
+  storage,
+  storageNeedsAttention,
+  onOpenStorage,
 }: SidebarProps) {
   return (
-    <aside className="w-64 bg-zinc-950 border-r border-zinc-900 hidden md:flex flex-col p-4 gap-6 z-10">
+    <aside className="w-64 bg-zinc-950 border-r border-zinc-900 hidden md:flex flex-col p-4 gap-6 z-10 overflow-y-auto">
       <div className="space-y-2">
         <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2">Library</h3>
         <button
@@ -99,7 +132,75 @@ export function Sidebar({
               className="hidden"
             />
         </label>
+        {canLinkFolders && (
+          <button
+            onClick={onLinkFolder}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-900 rounded-md transition-colors text-left group"
+            title={t.linkFolderHint}
+          >
+            <Link2 size={18} className="text-zinc-500 group-hover:text-cyan-400" />
+            {t.linkFolder}
+          </button>
+        )}
       </div>
+
+      {/* Shared with you (incoming share links) */}
+      {incoming.length > 0 && (
+        <div className="space-y-2 pt-2 border-t border-zinc-800">
+          <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2">{t.sharedWithYou}</h3>
+          <div className="space-y-1">
+            {incoming.map(share => {
+              const viewId = `share:${share.id}`;
+              return (
+                <div key={share.id} className="flex items-center gap-1 group">
+                  <button
+                    onClick={() => { onSetSelectedPlaylist(viewId); onSetViewMode(ViewMode.LIST); }}
+                    className={`flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-sm rounded-md text-left ${selectedPlaylist === viewId ? 'bg-zinc-900 text-purple-300' : 'text-zinc-300 hover:bg-zinc-900'}`}
+                  >
+                    {share.status === 'connecting'
+                      ? <Loader2 size={14} className="animate-spin text-purple-400 shrink-0" />
+                      : share.status === 'error'
+                        ? <AlertTriangle size={14} className="text-amber-400 shrink-0" />
+                        : <Users size={14} className="text-purple-400 shrink-0" />}
+                    <span className="truncate">{incomingTitles[share.id] ?? t.shareConnecting}</span>
+                  </button>
+                  <button onClick={() => onCloseIncoming(share.id)} className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-400" title={t.close}>
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Up Next (manual queue) */}
+      {upNext.length > 0 && (
+        <div className="space-y-2 pt-2 border-t border-zinc-800">
+          <div className="flex items-center justify-between px-2">
+            <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{t.upNext}</h3>
+            <button onClick={onClearQueue} className="text-[10px] text-zinc-500 hover:text-red-400">
+              {t.clearQueue}
+            </button>
+          </div>
+          <div className="space-y-1">
+            {upNext.map((track, index) => (
+              <div key={`${track.id}-${index}`} className="flex items-center gap-2 px-2 group">
+                <span className="flex-1 min-w-0 text-xs">
+                  <span className="block truncate text-zinc-300">{track.name}</span>
+                  <span className="block truncate text-zinc-600">{track.artist}</span>
+                </span>
+                <button
+                  onClick={() => onRemoveFromQueue(index)}
+                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-800 rounded text-zinc-600 hover:text-red-400"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Playlists */}
       <div className="space-y-2 pt-2 border-t border-zinc-800">
@@ -163,6 +264,7 @@ export function Sidebar({
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
+                    e.target.value = '';
                     if (file) onUpdatePlaylistCover(playlist.id, file);
                   }}
                 />
@@ -191,6 +293,15 @@ export function Sidebar({
                   {playlist.trackIds.length}
                 </span>
               </button>
+              {playlist.trackIds.length > 0 && (
+                <button
+                  onClick={() => onSharePlaylist(playlist.id)}
+                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-800 rounded text-zinc-600 hover:text-cyan-400 transition-all"
+                  title={t.shareWithFriends}
+                >
+                  <Share2 size={12} />
+                </button>
+              )}
               <button
                 onClick={() => onDeletePlaylist(playlist.id)}
                 className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-800 rounded text-zinc-600 hover:text-red-400 transition-all"
@@ -276,33 +387,56 @@ export function Sidebar({
         </div>
       </div>
 
-      {/* Library Info */}
-      <div className="space-y-2 pt-2 border-t border-zinc-800">
-        <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2">{t.libraryInfo}</h3>
-        <div className="px-3 py-2 text-xs text-zinc-600 space-y-1">
-          <p className="flex items-center gap-2">
-            <span className="text-zinc-500">{tracksCount} {t.tracksInLibrary}</span>
-          </p>
-          
-          <div className="flex gap-2 mt-4 pt-4 border-t border-zinc-800/50">
-            <button 
-              onClick={onBackupLibrary}
-              className="flex-1 flex items-center justify-center gap-2 px-2 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-cyan-400 rounded text-[10px] font-medium transition-colors"
-              title="Save library to file"
-            >
-              <Download size={12} /> {t.backupLibrary}
-            </button>
-            <label className="flex-1 flex items-center justify-center gap-2 px-2 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-cyan-400 rounded text-[10px] font-medium transition-colors cursor-pointer">
-              <Upload size={12} /> {t.restoreLibrary}
-              <input 
-                type="file" 
-                accept=".json" 
-                onChange={onRestoreLibrary} 
-                className="hidden" 
-              />
-            </label>
+      {/* Sharing (outgoing links this device is serving) */}
+      {outgoing.length > 0 && (
+        <div className="space-y-2 pt-2 border-t border-zinc-800">
+          <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2">{t.sharing}</h3>
+          <div className="space-y-1">
+            {outgoing.map(share => (
+              <div key={share.id} className="flex items-center gap-1 px-2 group">
+                <span className="flex-1 min-w-0 text-xs">
+                  <span className="block truncate text-zinc-300">{share.title}</span>
+                  <span className="block text-zinc-600">
+                    {share.mode === 'copy' ? t.shareModeCopy : t.shareModeStream} · {peerCounts[share.id] ?? 0} {t.peersConnected}
+                  </span>
+                </span>
+                <button onClick={() => onCopyShareLink(share)} className="p-1 text-zinc-600 hover:text-cyan-400" title={t.copy}>
+                  <Copy size={12} />
+                </button>
+                <button onClick={() => onStopShare(share.id)} className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-400" title={t.stopSharing}>
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
           </div>
+          <p className="px-2 text-[10px] text-zinc-600">{t.sharingKeepOpen}</p>
         </div>
+      )}
+
+      {/* Storage */}
+      <div className="mt-auto pt-2 border-t border-zinc-800">
+        <button onClick={onOpenStorage} className="w-full text-left px-2 py-2 rounded-md hover:bg-zinc-900 group space-y-1.5">
+          <span className="flex items-center gap-2 text-xs text-zinc-400 group-hover:text-zinc-200">
+            <HardDrive size={14} />
+            <span className="flex-1">{t.storageTitle}</span>
+            {storageNeedsAttention && <AlertTriangle size={14} className="text-amber-400" />}
+          </span>
+          {storage?.quota ? (
+            <>
+              <span className="block h-1 bg-zinc-800 rounded-full overflow-hidden">
+                <span
+                  className={`block h-full ${storage.usage / storage.quota > 0.8 ? 'bg-amber-500' : 'bg-cyan-600'}`}
+                  style={{ width: `${Math.max(1, (storage.usage / storage.quota) * 100)}%` }}
+                />
+              </span>
+              <span className="block text-[10px] text-zinc-600">
+                {tracksCount} {t.tracksInLibrary} · {formatBytes(storage.usage, 1)}
+              </span>
+            </>
+          ) : (
+            <span className="block text-[10px] text-zinc-600">{tracksCount} {t.tracksInLibrary}</span>
+          )}
+        </button>
       </div>
     </aside>
   );

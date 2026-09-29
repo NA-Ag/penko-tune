@@ -1,138 +1,102 @@
 # Penko-tune
 
-**An open-source, privacy-focused alternative to modern music platforms.**
+**A privacy-first music player for the music you own — and for sharing it with friends.**
 
-Inspired by the freedom and quality of VLC, Penko-tune aims to democratize access to music platforms while providing users with an exceptional listening experience. We empower artists with the tools necessary to build and control their platforms in a completely independent manner—no middlemen, no platform fees, no compromises.
+Inspired by the freedom and quality of VLC: your library lives on your device, nothing is tracked, and there are no accounts. When you want to share a track with a friend, it goes straight from your device to theirs.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
-## Mission
+## Principles
 
-**For Listeners:**
-- Privacy-first music experience without tracking or ads
-- Full control over your music library and data
-- Professional-grade audio tools (equalizer, visualizers, effects)
-- Freedom to listen how you want, where you want
-
-**For Artists:**
-- 100% ownership of your music and distribution
-- Zero platform fees—you keep everything
-- Direct connection with your fans
-- Tools to build sustainable, independent careers
-
-**Inspired by VLC's principles:** Free, open, community-driven, no strings attached.
+- **Local-first** - Your library, playlists and settings stay on your device (IndexedDB)
+- **No middlemen** - No accounts, no analytics, no proxies between you and your music
+- **Peer-to-peer sharing** - Friends get music directly from your device, end-to-end encrypted
+- **Open source** - Fully auditable code (GPL v3)
 
 ---
 
 ## Features
 
-### Music Playback
-- **Local Files** - Import individual files or entire folders
-- **YouTube Streaming** - Ad-free, privacy-focused streaming (works on deployed version)
-- **Network Streams** - Support for direct audio URLs
-- **PWA Support** - Install as app, works offline
+### Playback
+- **Local files** - Add files, import whole folders, or drag & drop
+- **Network streams** - Direct audio URLs and internet radio, fetched by your browser directly
+- **Magnet links** - Play tracks shared over WebTorrent
+- **PWA + desktop app** - Install from the browser, or use the Electron build; works offline
 
-### Professional Audio Tools
-- **10-Band Equalizer** - Fine-tune your sound with professional-grade EQ
-- **8 Visualizer Modes** - Bars, spectrum, wave, circle, spiral, particles, rings, DNA helix
-- **Audio Controls** - Volume, shuffle, repeat, playback rate
-- **Keyboard Shortcuts** - Full keyboard navigation for power users
-- **Gesture Controls** - Swipe, double-tap, hold for 2x speed
-- **Chapter Markers** - Bookmark specific moments in tracks
-- **Playlist Management** - Create and organize custom playlists
+### Audio tools
+- **10-band equalizer** with built-in and custom presets
+- **Vocal reduction** (karaoke mode)
+- **8 visualizer modes** - Bars, spectrum, mandala, circle, spiral, particles, rings, DNA helix
+- **Sleep timer**
+- **Chapter markers** - Right-click the seek bar to bookmark a moment
 
-### Privacy & Freedom
-- **Zero Tracking** - No analytics, cookies, or surveillance
-- **Local-First** - Your data stays on your device
-- **Open Source** - Fully auditable code (GPL v3)
-- **No Accounts** - No sign-up, no email, no personal data required
+### Your library
+- **Add files, folders or drag & drop**, or **link a music folder** (Chrome, Edge, Brave, Opera on desktop): linked music stays on your disk and is read directly, so nothing is copied
+- **Storage safety** - A storage meter, protection from browser clean-up (persistent storage), and clear warnings when your library is at risk or getting large
+- **Get your music out any time** - Download any track's original file, or export everything (audio, playlists, markers, settings) as one `.zip` you can import on any device
+- **Reads your tags** - Title, artist, album, track number, year, genre and embedded cover art (MP3, FLAC, OGG, M4A, WAV, ...), parsed on-device
+- **Search & sort** - Filter by title/artist/album/genre/year; sort by title, artist, album (in track order), duration or date added
+- **Up Next queue** - "Play next" and "Add to queue" from any track's menu
+- **Picks up where you left off** - Last track, position, volume, shuffle/repeat, sort and language are remembered
+- **Playlists** with custom covers; playback follows the list you're looking at (including search and sort)
+- **Custom album art** per track
+- **Library info backups** - Playlists and settings as a small `.json`, optionally password-protected (AES-GCM)
 
-### User Experience
-- **Modern UI** - Clean, dark theme built with Tailwind CSS
-- **Responsive Design** - Works on desktop, tablet, and mobile
-- **Touch & Mouse** - Optimized for all input methods
-- **Fast & Lightweight** - Powered by Vite and React 19
+### Share with friends
+- **Share links** for a track or playlist. Choose **Stream only** (friends listen while you're online) or **Send a copy** (they can save it)
+  - Encrypted on your device; the key is only in the link's `#fragment`, which is never sent to any server
+  - Friends start listening right away and can seek; the audio streams straight from your device over WebTorrent
+- **Listen together** - Start a session and send the link; friends hear what you play, live (including your EQ)
+- **Zero infrastructure** - No accounts or servers; peers find each other through free public WebTorrent trackers, which only ever see encrypted data
+- Things to know: the sharer needs Penko Tune open, connections are direct (peers can see each other's IP address), and some work/school networks block direct connections
+
+### Controls
+| Key | Action |
+| --- | --- |
+| Space | Play / pause |
+| ← / → | Seek -10s / +10s |
+| ↑ / ↓ | Volume |
+| M | Mute |
+| S | Shuffle |
+| R | Repeat (off → all → one) |
+| N / P | Next / previous track |
+| / | Search library |
+
+In the visualizer view: swipe to change track, double-tap left/right to skip, hold for 2x speed. Lock-screen and hardware media keys are supported.
 
 ---
 
 ## Quick Start
 
-### Local Development
-
-**Prerequisites:** Node.js 18+
+**Prerequisites:** Node.js 20+
 
 ```bash
-# Install dependencies
 npm install
-
-# Run development server
-npm run dev
-
-# Open http://localhost:3000
+npm run dev          # http://localhost:3000
 ```
 
-**That's it!** No API keys, no sign-up, no configuration needed.
+No API keys, no sign-up, no configuration.
 
-> **Note:** YouTube streaming requires a deployed version due to CORS restrictions. When deployed on GitHub Pages, Vercel, Netlify, etc., the feature works automatically with privacy-focused Piped/Invidious APIs. See [DEPLOYMENT.md](DEPLOYMENT.md) for deployment guides.
-
-### Deployment (YouTube Streaming Enabled)
-
-Deploy to any static hosting platform:
-
-**GitHub Pages:**
 ```bash
-npm run build
-# Deploy /dist folder to GitHub Pages
+npm run build        # static site in dist/
+npm run electron:dev # desktop app against the dev server
+npm run electron:build
 ```
 
-**Vercel/Netlify:**
-- Connect your GitHub repo
-- Build command: `npm run build`
-- Output directory: `dist`
-- YouTube streaming will work automatically
-
-Once deployed, all features including YouTube ad-free streaming are fully functional.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for hosting guides.
 
 ---
 
 ## Roadmap
 
-See **[ROADMAP.md](ROADMAP.md)** for the complete alpha to beta transition plan:
+See **[ROADMAP.md](ROADMAP.md)**. Next up:
 
-**Phase 1: Production Polish & Deployment**
-- GitHub Actions auto-deployment
-- Custom domain configuration
-- PWA enhancements
-- Community infrastructure
-
-**Phase 2: Decentralized Distribution**
-- WebTorrent P2P music sharing
-- Artist upload interface
-- Magnet link playback
-
-**Phase 3: Permanent Storage**
-- IPFS integration for censorship-resistant storage
-- Cover art and metadata on IPFS
-
-**Phase 4: Direct Artist Payments**
-- Lightning Network micropayments
-- Monero privacy donations
-- Ethereum L2 royalty splits
-
-**Phase 5: Plugin System**
-- Extensible plugin architecture
-- Community marketplace
-- Last.fm scrobbler, lyrics, Discord integration
-
-**Phase 6: Decentralized Federation**
-- ActivityPub-lite social features
-- Artist discovery and following
-- Collaborative playlists
-
-**Goal:** A true Spotify alternative that's free, open-source, and artist-owned.
+1. Album / artist browse views
+2. Reorder the queue and playlists by dragging
+3. Complete translations for the newest features
 
 ---
 
@@ -140,14 +104,8 @@ See **[ROADMAP.md](ROADMAP.md)** for the complete alpha to beta transition plan:
 
 GPL v3 - See [LICENSE.md](LICENSE.md) for details.
 
-**Why GPL v3?** Keeps Penko-tune free forever, prevents corporate takeovers.
-
 ---
 
 ## Contributing
 
-PRs welcome! Check out the [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [ROADMAP.md](ROADMAP.md) for feature ideas.
-
----
-
-
+PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [ROADMAP.md](ROADMAP.md) for feature ideas.

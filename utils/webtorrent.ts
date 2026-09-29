@@ -1,7 +1,13 @@
-// WebTorrent utilities for P2P music streaming and distribution
 import type { Instance, Torrent } from 'webtorrent';
+import { AUDIO_FILE_PATTERN } from './audio';
 
 let client: Instance | null = null;
+
+// Active public WebSocket trackers for WebRTC browser torrent discovery
+export const PUBLIC_WEBSOCKET_TRACKERS = [
+  'wss://tracker.webtorrent.dev',
+  'wss://tracker.openwebtorrent.com',
+];
 
 /**
  * Initialize WebTorrent client (singleton)
@@ -9,7 +15,9 @@ let client: Instance | null = null;
 export const initWebTorrent = async (): Promise<Instance> => {
   if (!client) {
     const { default: WebTorrent } = await import('webtorrent');
-    client = new WebTorrent() as Instance;
+    // Browsers can only reach WebRTC peers via websocket trackers; disable the Node-only
+    // UDP/TCP discovery mechanisms (the DHT is aliased to a stub in vite.config.ts).
+    client = new WebTorrent({ dht: false, lsd: false, utp: false, natUpnp: false, natPmp: false }) as Instance;
     console.log('[WebTorrent] Client initialized');
   }
   return client;
@@ -37,40 +45,23 @@ export const streamFromTorrent = async (
   const wtClient = await getWebTorrentClient();
 
   try {
-    const torrent = wtClient.add(magnetURI, (torrent) => {
-      console.log('[WebTorrent] Torrent ready:', torrent.name);
-      console.log('[WebTorrent] Files:', torrent.files.length);
+    const torrent = wtClient.add(magnetURI, { announce: PUBLIC_WEBSOCKET_TRACKERS }, async (torrent) => {
+      console.log('[WebTorrent] Torrent ready:', torrent.name, `(${torrent.files.length} files)`);
 
-      // Find audio file (first audio file in torrent)
-      const audioFile = torrent.files.find(file =>
-        file.name.match(/\.(mp3|wav|ogg|flac|m4a|aac|webm)$/i)
-      );
-
+      const audioFile = torrent.files.find(file => AUDIO_FILE_PATTERN.test(file.name));
       if (!audioFile) {
         onError?.(new Error('No audio file found in torrent'));
         return;
       }
 
-      // Create blob URL for streaming
-      audioFile.getBlobURL((err, blobUrl) => {
-        if (err) {
-          onError?.(err);
-          return;
-        }
-
-        if (blobUrl) {
-          // Create File object for compatibility with existing Track interface
-          audioFile.getBlob((err, blob) => {
-            if (err || !blob) {
-              onError?.(err || new Error('Failed to get blob'));
-              return;
-            }
-
-            const file = new File([blob], audioFile.name, { type: blob.type });
-            onReady(blobUrl, file);
-          });
-        }
-      });
+      try {
+        // webtorrent 2.x exposes an async blob(); the old getBlob/getBlobURL callbacks were removed
+        const blob = await audioFile.blob();
+        const file = new File([blob], audioFile.name, { type: blob.type });
+        onReady(URL.createObjectURL(file), file);
+      } catch (err) {
+        onError?.(err as Error);
+      }
     });
 
     // Progress updates
@@ -95,57 +86,35 @@ export const streamFromTorrent = async (
 };
 
 /**
- * Seed a file via WebTorrent
- * @param file File to seed
- * @param onSeeding Callback when seeding starts with magnet link
+ * Seed a file via WebTorrent. Resolves with the magnet URI once hashing finishes
+ * (torrent.magnetURI is not populated until then).
  */
-export const seedFile = async (
-  file: File,
-  onSeeding: (magnetURI: string, torrent: Torrent) => void,
-  onError?: (error: Error) => void
-): Promise<Torrent | null> => {
+export const seedFile = async (file: File): Promise<string> => {
   const wtClient = await getWebTorrentClient();
 
-  try {
-    const torrent = wtClient.seed(file, (torrent) => {
-      console.log('[WebTorrent] Now seeding:', torrent.name);
-      console.log('[WebTorrent] Magnet URI:', torrent.magnetURI);
-      onSeeding(torrent.magnetURI, torrent);
+  return new Promise((resolve, reject) => {
+    const torrent = wtClient.seed(file, { announce: PUBLIC_WEBSOCKET_TRACKERS }, (seeded) => {
+      console.log('[WebTorrent] Now seeding:', seeded.name);
+      resolve(seeded.magnetURI);
     });
-
     torrent.on('error', (err) => {
       console.error('[WebTorrent] Seeding error:', err);
-      onError?.(err);
+      reject(typeof err === 'string' ? new Error(err) : err);
     });
-
-    return torrent;
-  } catch (error) {
-    console.error('[WebTorrent] Failed to seed file:', error);
-    onError?.(error as Error);
-    return null;
-  }
+  });
 };
 
 /**
- * Remove torrent from client
+ * Remove torrent from client (get/remove are async in webtorrent 2.x)
  */
-export const removeTorrent = (magnetURI: string): void => {
-  if (client) {
-    const torrent = client.get(magnetURI);
-    if (torrent) {
-      client.remove(magnetURI);
+export const removeTorrent = async (magnetURI: string): Promise<void> => {
+  if (!client) return;
+  try {
+    if (await client.get(magnetURI)) {
+      await client.remove(magnetURI);
       console.log('[WebTorrent] Torrent removed');
     }
-  }
-};
-
-/**
- * Destroy WebTorrent client
- */
-export const destroyWebTorrent = (): void => {
-  if (client) {
-    client.destroy();
-    client = null;
-    console.log('[WebTorrent] Client destroyed');
+  } catch (err) {
+    console.warn('[WebTorrent] Failed to remove torrent', err);
   }
 };

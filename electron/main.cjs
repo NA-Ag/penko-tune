@@ -1,35 +1,34 @@
+// CommonJS on purpose: package.json sets "type": "module", so this file needs the .cjs extension.
 const { app, BrowserWindow, shell } = require('electron');
 const path = require('path');
+
+// `npm run electron:dev` runs unpackaged against the Vite dev server; release builds load the bundled files.
+const DEV_SERVER_URL = 'http://localhost:3000';
 
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
     },
-    // Use the PNG icon we generated for the PWA
-    icon: path.join(__dirname, '../public/pwa-512x512.png')
+    // public/ is copied into dist/ by Vite, and only dist/ is packaged
+    icon: path.join(__dirname, '../dist/pwa-512x512.png'),
   });
 
-  // In production, load the built index.html
-  // In development, you can load localhost if you set up a dev script, 
-  // but for the release build, we always want the file.
-  if (process.env.NODE_ENV === 'development') {
-    win.loadURL('http://localhost:3000');
-  } else {
+  if (app.isPackaged) {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
+  } else {
+    win.loadURL(DEV_SERVER_URL);
   }
 
-  // Important: Open external links in the user's default browser
+  // Open external links in the user's default browser
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https:') || url.startsWith('http:')) {
       shell.openExternal(url);
-      return { action: 'deny' };
     }
-    return { action: 'allow' };
+    return { action: 'deny' };
   });
 }
 

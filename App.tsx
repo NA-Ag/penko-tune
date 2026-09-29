@@ -1,23 +1,39 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { FolderOpen, Layout, List, BarChart2, Plus, Sliders, Globe, FastForward, Activity, Waves, Image as ImageIcon, ChevronDown, Check, Loader2, AlertCircle, Disc, Music, Bookmark, Mic, Timer, X, Download, Sparkles, TrendingUp, Radio, Dna, Upload, Compass, Languages, BookOpen, Menu } from 'lucide-react';
-import { Track, PlayerState, ViewMode, EQBand, VisualizerMode, Playlist, ChapterMarker, DecentralizedTrack } from './types';
-import { translations, Language } from './translations';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { BarChart2, Sliders, Globe, FastForward, ChevronDown, Check, Loader2, AlertCircle, Mic, Timer, X, Download, Languages, BookOpen, Menu, List, Users } from 'lucide-react';
+import { Track, ViewMode, VisualizerMode, ChapterMarker } from './types';
+import { translations, languageNames, Language } from './translations';
 import PlayerControls from './components/PlayerControls';
 import TrackList from './components/TrackList';
 import Visualizer from './components/Visualizer';
 import Equalizer from './components/Equalizer';
-import { ArtistPortal } from './components/ArtistPortal';
-import { BrowseMusic } from './components/BrowseMusic';
-import { saveTracksToIndexedDB, loadTracksFromIndexedDB, isPersistenceEnabled, setPersistenceEnabled, clearLibrary, saveEQSettings, loadEQSettings, savePlaylists, loadPlaylists, saveMarkers, loadMarkers, exportLibraryAsJSON, importLibraryFromJSON } from './utils/persistence';
-import { formatTime } from './utils/formatters';
-import { useAudioPlayer, EQ_FREQUENCIES } from './hooks/useAudioPlayer';
 import { Sidebar } from './components/Sidebar';
 import { MobileMenu } from './components/MobileMenu';
-import { useDecentralizedStream } from './hooks/useDecentralizedStream';
 import { NetworkStreamModal } from './components/NetworkStreamModal';
-
-// Helper to generate IDs
-const generateId = () => Math.random().toString(36).substr(2, 9);
+import { VISUALIZER_OPTIONS } from './components/visualizerOptions';
+import { PenkoTuneLogo } from './components/penko/PenkoTuneLogo';
+import { saveTracksToIndexedDB, loadTracksFromIndexedDB, exportLibraryAsJSON } from './utils/persistence';
+import { exportLibraryZip, importLibraryFile, downloadTrackFile, downloadBlob } from './utils/libraryArchive';
+import { canLinkFolders } from './utils/storage';
+import { parseShareHash, buildShareLink } from './utils/sharing';
+import { formatTime } from './utils/formatters';
+import { AUDIO_FILE_PATTERN, generateId, readFileAsDataURL } from './utils/audio';
+import { readTags, mapWithConcurrency, TrackTags } from './utils/metadata';
+import { filterAndSortTracks } from './utils/library';
+import { loadPreferences, savePreferences, SortKey } from './utils/preferences';
+import { useAudioPlayer } from './hooks/useAudioPlayer';
+import { useTorrentStream, needsP2PResolution } from './hooks/useTorrentStream';
+import { useSleepTimer } from './hooks/useSleepTimer';
+import { useChapterMarkers } from './hooks/useChapterMarkers';
+import { usePlaylists } from './hooks/usePlaylists';
+import { useLinkedFolders } from './hooks/useLinkedFolders';
+import { useSharing } from './hooks/useSharing';
+import { useStorageStatus } from './hooks/useStorageStatus';
+import { useListenTogether, parseRoomHash } from './hooks/useListenTogether';
+import { StorageDialog } from './components/StorageDialog';
+import { StorageBanner } from './components/StorageBanner';
+import { ShareDialog } from './components/ShareDialog';
+import { ListenTogetherDialog } from './components/ListenTogetherDialog';
+import { IncomingShareHeader, IncomingShareStatus } from './components/IncomingShareHeader';
 
 interface Toast {
   message: string;
@@ -25,49 +41,58 @@ interface Toast {
   id: number;
 }
 
+const SKIP_SECONDS = 10;
+const SLEEP_TIMER_OPTIONS = [15, 30, 45, 60, 90, 120];
+
 function App() {
   // --- State ---
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [libraryLoaded, setLibraryLoaded] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.LIST);
-  const [visualizerMode, setVisualizerMode] = useState<VisualizerMode>(VisualizerMode.BARS);
-
-  // Playlist State
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null); // null = "All Tracks"
-  const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
-  const [newPlaylistName, setNewPlaylistName] = useState('');
-
-  // Chapter Marker State
-  const [markers, setMarkers] = useState<ChapterMarker[]>([]);
-  const [editingMarkerId, setEditingMarkerId] = useState<string | null>(null);
-  const [editingMarkerLabel, setEditingMarkerLabel] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => loadPreferences().viewMode);
+  const [visualizerMode, setVisualizerMode] = useState<VisualizerMode>(() => loadPreferences().visualizerMode);
+  const [sortKey, setSortKey] = useState<SortKey>(() => loadPreferences().sortKey);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [upNext, setUpNext] = useState<string[]>([]); // track ids queued with "Play next" / "Add to queue"
 
   const [showEQ, setShowEQ] = useState(false);
   const [showNetworkStream, setShowNetworkStream] = useState(false);
   const [showVisMenu, setShowVisMenu] = useState(false);
-  const [showCoverBackground, setShowCoverBackground] = useState(true);
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
-  const [currentLanguage, setCurrentLanguage] = useState<Language>('en');
+  const [showSleepTimer, setShowSleepTimer] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [expandedSection, setExpandedSection] = useState<string | null>('navigation');
-
-  // Translation helper
-  const t = translations[currentLanguage];
+  const [currentLanguage, setCurrentLanguage] = useState<Language>(() => loadPreferences().language);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [activeGesture, setActiveGesture] = useState<string | null>(null);
 
-  // Helpers
+  // PWA install prompt (BeforeInstallPromptEvent is not in the DOM typings)
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  const t = translations[currentLanguage];
+
+  const toastIdRef = useRef(0);
   const addToast = useCallback((message: string, type: 'error' | 'info' = 'info') => {
-      const id = Date.now();
-      setToasts(prev => [...prev, { message, type, id }]);
-      setTimeout(() => {
-          setToasts(prev => prev.filter(t => t.id !== id));
-      }, 4000);
+    const id = ++toastIdRef.current;
+    setToasts(prev => [...prev, { message, type, id }]);
+    setTimeout(() => setToasts(prev => prev.filter(toast => toast.id !== id)), 4000);
   }, []);
-  
-  // --- Audio Player Hook ---
-  const playNextRef = useRef<() => void>(() => {});
 
+  // Latest versions of actions used by long-lived listeners (keyboard, media session, audio 'ended').
+  // Assigned every render below so those listeners never see stale state.
+  const actionsRef = useRef({
+    togglePlayPause: () => {},
+    playNext: () => {},
+    playPrev: () => {},
+    skip: (_seconds: number) => {},
+    nudgeVolume: (_delta: number) => {},
+    toggleMute: () => {},
+    toggleShuffle: () => {},
+    cycleRepeat: () => {},
+    focusSearch: () => {},
+  });
+
+  // --- Hooks ---
   const {
     audioRef,
     playerState,
@@ -75,1104 +100,1028 @@ function App() {
     analyser,
     eqBands,
     setEqBands,
-    initAudioContext,
     toggleKaraokeMode,
     playTrack: playTrackAudio,
+    loadTrack,
     togglePlayPause: togglePlayPauseAudio,
-    seek: handleSeek,
-    setVolume: handleVolume,
+    pause,
+    stop,
+    seek,
+    setVolume,
     toggleMute,
+    setPlaybackRate,
     handleEQChange,
-    resetEQ
+    resetEQ,
+    getOutputStream,
   } = useAudioPlayer({
-    onTrackEnd: () => playNextRef.current(),
-    onError: (msg) => addToast(msg, 'error')
+    onTrackEnd: () => actionsRef.current.playNext(),
+    onError: (msg) => addToast(msg, 'error'),
   });
 
-  // Gestures State
-  const touchStartRef = useRef<{x: number, y: number, time: number} | null>(null);
-  const lastTapRef = useRef<{time: number, x: number} | null>(null);
-  const holdTimeoutRef = useRef<number | null>(null);
-  const [activeGesture, setActiveGesture] = useState<string | null>(null);
+  const {
+    playlists,
+    selectedPlaylist,
+    setSelectedPlaylist,
+    showCreatePlaylist,
+    setShowCreatePlaylist,
+    newPlaylistName,
+    setNewPlaylistName,
+    createPlaylist,
+    createPlaylistWithTracks,
+    deletePlaylist,
+    addTrackToPlaylist,
+    removeTrackFromPlaylist,
+    purgeTrack: purgeTrackFromPlaylists,
+    updatePlaylistCover,
+  } = usePlaylists({ addToast });
 
-  // Sleep Timer State
-  const [sleepTimerMinutes, setSleepTimerMinutes] = useState<number | null>(null);
-  const [sleepTimerEndTime, setSleepTimerEndTime] = useState<number | null>(null);
-  const [showSleepTimer, setShowSleepTimer] = useState(false);
-  const sleepTimerIntervalRef = useRef<number | null>(null);
+  const {
+    markers,
+    editingMarkerId,
+    editingMarkerLabel,
+    setEditingMarkerId,
+    setEditingMarkerLabel,
+    addMarker,
+    deleteMarker,
+    purgeTrack: purgeTrackMarkers,
+    updateMarkerLabel,
+  } = useChapterMarkers({ addToast });
 
-  // PWA Install State
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallButton, setShowInstallButton] = useState(false);
+  const {
+    isSleepTimerActive,
+    sleepTimerRemainingMs,
+    startSleepTimer,
+    cancelSleepTimer,
+  } = useSleepTimer({ onTimerExpired: pause, addToast });
 
-  // Artist Portal State
-  const [showArtistPortal, setShowArtistPortal] = useState(false);
+  // Dialogs for storage, sharing and listening together
+  const [showStorage, setShowStorage] = useState(false);
+  const [storageBusy, setStorageBusy] = useState<{ label: string; progress?: number } | null>(null);
+  const [shareTarget, setShareTarget] = useState<{ title: string; tracks: Track[] } | null>(null);
+  const [showListen, setShowListen] = useState(false);
+  const [roomInvite, setRoomInvite] = useState<{ roomId: string; password: string } | null>(null);
 
-  // Browse Music State
-  const [showBrowseMusic, setShowBrowseMusic] = useState(false);
+  // --- Library load & persistence ---
+  // Imports write straight to the database and then reload; saving the in-memory library
+  // meanwhile would overwrite what was imported.
+  const suspendSaveRef = useRef(false);
+  const lastSavedTracksRef = useRef<Track[] | null>(null);
 
-  // Persistence State
-  const hasLoadedLibraryRef = useRef(false);
-
-  // --- Close language menu on click outside ---
   useEffect(() => {
-    if (!showLanguageMenu) return;
+    let cancelled = false;
+    loadTracksFromIndexedDB()
+      .then(saved => {
+        if (cancelled) return;
+        setTracks(prev => {
+          const merged = [...saved, ...prev.filter(t => !saved.some(s => s.id === t.id))];
+          lastSavedTracksRef.current = merged; // already on disk; no need to write it back
+          return merged;
+        });
+        setLibraryLoaded(true);
 
-    const handleClickOutside = (e: MouseEvent) => {
+        // Resume where the last session left off (paused)
+        const { lastTrackId, lastPosition } = loadPreferences();
+        const last = saved.find(t => t.id === lastTrackId);
+        if (last && !needsP2PResolution(last)) {
+          setCurrentTrack(prev => prev ?? last);
+          loadTrack(last, lastPosition);
+        }
+      })
+      .catch(err => {
+        // Leave libraryLoaded false so a failed read never triggers an overwrite of saved data
+        console.error('[App] Failed to load library:', err);
+        addToast('Failed to load saved library', 'error');
+      });
+    return () => { cancelled = true; };
+  }, [addToast, loadTrack]);
+
+  useEffect(() => {
+    if (!libraryLoaded || suspendSaveRef.current || tracks === lastSavedTracksRef.current) return;
+    const timeout = setTimeout(() => {
+      if (suspendSaveRef.current) return;
+      lastSavedTracksRef.current = tracks;
+      saveTracksToIndexedDB(tracks).catch(err => {
+        console.error('[App] Failed to save library:', err);
+        addToast('Error saving library', 'error');
+      });
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [tracks, libraryLoaded, addToast]);
+
+  // --- Storage health, linked folders, sharing ---
+  const storage = useStorageStatus(tracks, libraryLoaded);
+
+  const {
+    folders, disconnectedIds, scanningIds, linkFolder, reconnectFolders, rescanFolder, unlinkFolder,
+  } = useLinkedFolders({ tracks, setTracks, libraryLoaded, addToast });
+
+  const sharing = useSharing({
+    tracks,
+    setTracks,
+    libraryLoaded,
+    addToast,
+    onSavedPlaylist: createPlaylistWithTracks,
+  });
+
+  const listen = useListenTogether({
+    getOutputStream,
+    currentTrack,
+    isPlaying: playerState.isPlaying,
+    onJoin: pause,
+    addToast,
+  });
+
+  // --- Derived state ---
+  const tracksById = useMemo(() => new Map(tracks.map(t => [t.id, t])), [tracks]);
+  // Tracks received through share links live in their own view, not the library
+  const libraryTracks = useMemo(() => tracks.filter(t => !t.incomingShareId), [tracks]);
+
+  // The library or the selected playlist (in playlist order), before search/sort
+  const baseList = useMemo((): Track[] => {
+    if (selectedPlaylist?.startsWith('share:')) {
+      const shareId = selectedPlaylist.slice('share:'.length);
+      return tracks.filter(t => t.incomingShareId === shareId);
+    }
+    const playlist = selectedPlaylist ? playlists.find(p => p.id === selectedPlaylist) : null;
+    if (!playlist) return libraryTracks;
+    return playlist.trackIds.map(id => tracksById.get(id)).filter((t): t is Track => !!t);
+  }, [tracks, libraryTracks, tracksById, playlists, selectedPlaylist]);
+
+  // The play queue is exactly what's on screen: filtered by search, in the chosen sort order
+  const queue = useMemo(
+    () => filterAndSortTracks(baseList, searchQuery, sortKey),
+    [baseList, searchQuery, sortKey]
+  );
+
+  const upNextTracks = useMemo(
+    () => upNext.map(id => tracksById.get(id)).filter((t): t is Track => !!t),
+    [upNext, tracksById]
+  );
+
+  const currentTrackMarkers = useMemo((): ChapterMarker[] => {
+    if (!currentTrack) return [];
+    return markers.filter(m => m.trackId === currentTrack.id).sort((a, b) => a.timestamp - b.timestamp);
+  }, [markers, currentTrack]);
+
+  // --- Playback ---
+  const startTrack = useCallback((track: Track) => {
+    setCurrentTrack(track);
+    playTrackAudio(track);
+  }, [playTrackAudio]);
+
+  const { playFromTorrent, isResolving: isResolvingP2P } = useTorrentStream({
+    setTracks,
+    startTrack,
+    addToast,
+  });
+
+  /**
+   * Play a track. Selecting the current track toggles play/pause, unless `restartIfCurrent`
+   * is set (queue navigation), in which case it restarts from the beginning.
+   */
+  const playTrack = useCallback((track: Track, restartIfCurrent = false) => {
+    if (currentTrack?.id === track.id && audioRef.current.src) {
+      if (restartIfCurrent) {
+        seek(0);
+        playTrackAudio(currentTrack);
+      } else {
+        togglePlayPauseAudio();
+      }
+      return;
+    }
+
+    // Linked track whose folder needs permission again (after a browser restart)
+    if (track.fileHandle && !track.url) {
+      reconnectFolders();
+      return;
+    }
+    // Received track in a browser without the streaming service worker: download, then play
+    if (track.incomingShareId && !track.url) {
+      addToast('Downloading from your friend...');
+      sharing.resolveIncomingTrack(track).then(resolved => resolved && startTrack(resolved));
+      return;
+    }
+
+    if (needsP2PResolution(track)) {
+      playFromTorrent(track);
+    } else {
+      startTrack(track);
+    }
+  }, [currentTrack, audioRef, seek, playTrackAudio, togglePlayPauseAudio, playFromTorrent, startTrack, reconnectFolders, sharing, addToast]);
+
+  const togglePlayPause = () => {
+    if (!currentTrack) {
+      if (queue.length > 0) playTrack(queue[0]);
+      return;
+    }
+    togglePlayPauseAudio();
+  };
+
+  const getNextTrack = (): Track | null => {
+    if (queue.length === 0) return null;
+    const index = currentTrack ? queue.findIndex(t => t.id === currentTrack.id) : -1;
+
+    if (playerState.isShuffle && queue.length > 1) {
+      const candidates = queue.filter((_, i) => i !== index);
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+
+    if (index === -1) return queue[0];
+    if (index + 1 < queue.length) return queue[index + 1];
+    return playerState.repeatMode === 'all' ? queue[0] : null;
+  };
+
+  const playNext = () => {
+    // Manually queued tracks ("Play next" / "Add to queue") take priority over the list order
+    const [queued, ...rest] = upNextTracks;
+    if (queued) {
+      setUpNext(rest.map(t => t.id));
+      playTrack(queued, true);
+      return;
+    }
+    const next = getNextTrack();
+    if (next) playTrack(next, true);
+    else addToast('End of playlist');
+  };
+
+  const playPrev = () => {
+    // Like most players: go back to the start of the song unless we're right at the beginning
+    if (currentTrack && playerState.currentTime > 3) {
+      seek(0);
+      return;
+    }
+    if (queue.length === 0) return;
+
+    const index = currentTrack ? queue.findIndex(t => t.id === currentTrack.id) : -1;
+    if (index > 0) playTrack(queue[index - 1], true);
+    else if (index === -1) playTrack(queue[queue.length - 1], true);
+    else if (playerState.repeatMode === 'all') playTrack(queue[queue.length - 1], true);
+    else seek(0);
+  };
+
+  const skip = (seconds: number) => {
+    if (!currentTrack) return;
+    seek(audioRef.current.currentTime + seconds);
+  };
+
+  const toggleShuffle = () => setPlayerState(prev => ({ ...prev, isShuffle: !prev.isShuffle }));
+
+  const cycleRepeat = () => setPlayerState(prev => ({
+    ...prev,
+    repeatMode: prev.repeatMode === 'off' ? 'all' : prev.repeatMode === 'all' ? 'one' : 'off',
+  }));
+
+  useEffect(() => {
+    actionsRef.current = {
+      togglePlayPause,
+      playNext,
+      playPrev,
+      skip,
+      nudgeVolume: (delta) => setVolume(playerState.volume + delta),
+      toggleMute,
+      toggleShuffle: () => {
+        toggleShuffle();
+        addToast(`Shuffle ${playerState.isShuffle ? 'Off' : 'On'}`);
+      },
+      cycleRepeat: () => {
+        cycleRepeat();
+        const next = playerState.repeatMode === 'off' ? 'all' : playerState.repeatMode === 'all' ? 'one' : 'off';
+        addToast(`Repeat: ${next}`);
+      },
+      focusSearch: () => {
+        setViewMode(ViewMode.LIST);
+        // Wait for the list view to render if we were in the visualizer
+        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('input[type=search]')?.focus());
+      },
+    };
+  });
+
+  // --- Global listeners ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      // Close if clicking outside the language menu
-      if (!target.closest('.language-menu-container')) {
-        setShowLanguageMenu(false);
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const actions = actionsRef.current;
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          actions.togglePlayPause();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          actions.skip(-SKIP_SECONDS);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          actions.skip(SKIP_SECONDS);
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          actions.nudgeVolume(0.1);
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          actions.nudgeVolume(-0.1);
+          break;
+        case 'm':
+          actions.toggleMute();
+          break;
+        case 's':
+          actions.toggleShuffle();
+          break;
+        case 'r':
+          actions.cycleRepeat();
+          break;
+        case 'n':
+          actions.playNext();
+          break;
+        case 'p':
+          actions.playPrev();
+          break;
+        case '/':
+          e.preventDefault();
+          actions.focusSearch();
+          break;
       }
     };
 
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, [showLanguageMenu]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
-  // --- PWA Install Prompt Handler ---
+  // Media Session API (lock screen / hardware media keys)
   useEffect(() => {
-    const handleBeforeInstallPrompt = (e: any) => {
-      // Prevent the mini-infobar from appearing on mobile
-      e.preventDefault();
-      // Stash the event so it can be triggered later
-      setDeferredPrompt(e);
-      // Show the install button
-      setShowInstallButton(true);
-    };
+    if (!('mediaSession' in navigator)) return;
+    const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
+      ['play', () => actionsRef.current.togglePlayPause()],
+      ['pause', () => actionsRef.current.togglePlayPause()],
+      ['previoustrack', () => actionsRef.current.playPrev()],
+      ['nexttrack', () => actionsRef.current.playNext()],
+      ['seekbackward', () => actionsRef.current.skip(-SKIP_SECONDS)],
+      ['seekforward', () => actionsRef.current.skip(SKIP_SECONDS)],
+    ];
+    for (const [action, handler] of handlers) {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch {
+        // Unsupported action on this platform
+      }
+    }
+  }, []);
 
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = playerState.isPlaying ? 'playing' : 'paused';
+    }
+  }, [playerState.isPlaying]);
+
+  // Now-playing metadata (re-applied when tags or cover art arrive for the current track)
+  useEffect(() => {
+    document.title = currentTrack
+      ? `${currentTrack.name}${currentTrack.artist ? ` · ${currentTrack.artist}` : ''} — Penko-tune`
+      : 'Penko-tune';
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = currentTrack
+        ? new MediaMetadata({
+            title: currentTrack.name,
+            artist: currentTrack.artist || 'Unknown Artist',
+            album: currentTrack.album || '',
+            artwork: currentTrack.coverArtUrl ? [{ src: currentTrack.coverArtUrl }] : [],
+          })
+        : null;
+    }
+  }, [currentTrack]);
+
+  // --- Preferences ---
+  useEffect(() => {
+    savePreferences({ language: currentLanguage, viewMode, visualizerMode, sortKey });
+  }, [currentLanguage, viewMode, visualizerMode, sortKey]);
+
+  // Remember the current track and position so the next session can resume it
+  useEffect(() => {
+    if (!libraryLoaded) return; // don't clobber the saved session before it has been restored
+    savePreferences({ lastTrackId: currentTrack && tracksById.has(currentTrack.id) ? currentTrack.id : null });
+  }, [currentTrack?.id, tracksById, libraryLoaded]);
+
+  useEffect(() => {
+    const savePosition = () => {
+      // readyState 0 = nothing loaded yet (e.g. while restoring), so currentTime would read 0
+      if (currentTrack && audioRef.current.readyState > 0) {
+        savePreferences({ lastPosition: audioRef.current.currentTime });
+      }
+    };
+    const interval = playerState.isPlaying ? setInterval(savePosition, 5000) : undefined;
+    if (!playerState.isPlaying) savePosition();
+    window.addEventListener('pagehide', savePosition);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('pagehide', savePosition);
+    };
+  }, [playerState.isPlaying, currentTrack, audioRef]);
+
+  // --- Tag reading ---
+  // Local files get their title/artist/album/cover from embedded tags, in the background,
+  // so adding hundreds of files stays instant. Also upgrades libraries saved before tag support.
+  const scanningRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!libraryLoaded) return;
+    const pending = tracks.filter(t => t.file && !t.tagsRead && !scanningRef.current.has(t.id));
+    if (pending.length === 0) return;
+    pending.forEach(t => scanningRef.current.add(t.id));
+
+    // Batch results into a few state updates instead of one re-render per file
+    let buffer: [string, Partial<TrackTags>][] = [];
+    const flush = () => {
+      if (buffer.length === 0) return;
+      const results = new Map(buffer);
+      buffer = [];
+      const apply = (t: Track): Track => {
+        const tags = results.get(t.id);
+        if (!tags) return t;
+        const artist = tags.artist ?? (t.artist === 'Local File' ? 'Unknown Artist' : t.artist);
+        // Embedded art wins over a folder image; a cover set by the user later is never overwritten
+        return { ...t, ...tags, artist, coverArtUrl: tags.coverArtUrl ?? t.coverArtUrl, tagsRead: true };
+      };
+      setTracks(prev => prev.map(apply));
+      setCurrentTrack(prev => (prev ? apply(prev) : prev));
+    };
+    const flushTimer = setInterval(flush, 400);
+
+    if (pending.length > 20) addToast(`${t.readingTags} (${pending.length})`);
+    const coverCache = new Map<string, string | undefined>();
+    mapWithConcurrency(
+      pending,
+      track => readTags(track.file!, coverCache),
+      (track, tags) => {
+        scanningRef.current.delete(track.id);
+        buffer.push([track.id, tags]);
+      }
+    ).finally(() => {
+      clearInterval(flushTimer);
+      flush();
+    });
+    // Deliberately not cancelled on re-run: each scan owns its own tracks via scanningRef
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks, libraryLoaded]);
+
+  // Close header dropdowns on outside click
+  useEffect(() => {
+    if (!showLanguageMenu && !showVisMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Element;
+      if (!target.closest('.language-menu-container')) setShowLanguageMenu(false);
+      if (!target.closest('#vis-menu-container')) setShowVisMenu(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showLanguageMenu, showVisMenu]);
+
+  // PWA install prompt
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault(); // Suppress the mini-infobar; we show our own button
+      setDeferredPrompt(e);
+    };
     const handleAppInstalled = () => {
-      // Hide the install button after successful installation
-      setShowInstallButton(false);
       setDeferredPrompt(null);
       addToast('Penko-tune installed successfully!');
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
-
-    // Check if already installed (standalone mode)
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-      setShowInstallButton(false);
-    }
-
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
-  }, []);
+  }, [addToast]);
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) {
-      addToast('App is already installed or install prompt not available', 'info');
-      return;
-    }
-
-    // Show the install prompt
+    if (!deferredPrompt) return;
     deferredPrompt.prompt();
-
-    // Wait for the user to respond to the prompt
-    const { outcome } = await deferredPrompt.userChoice;
-
-    if (outcome === 'accepted') {
-      console.log('User accepted the install prompt');
-    } else {
-      console.log('User dismissed the install prompt');
-    }
-
-    // Clear the deferred prompt
+    await deferredPrompt.userChoice;
     setDeferredPrompt(null);
   };
 
-  // --- Media Session API for lock screen controls ---
-  useEffect(() => {
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.setActionHandler('play', () => {
-        togglePlayPause();
-      });
-      navigator.mediaSession.setActionHandler('pause', () => {
-        togglePlayPause();
-      });
-      navigator.mediaSession.setActionHandler('previoustrack', () => {
-        playPrev();
-      });
-      navigator.mediaSession.setActionHandler('nexttrack', () => {
-        playNext();
-      });
-      navigator.mediaSession.setActionHandler('seekbackward', () => {
-        skip(-10);
-      });
-      navigator.mediaSession.setActionHandler('seekforward', () => {
-        skip(10);
-      });
-    }
-  }, []);
-
-  // --- Auto-load saved library on startup (ALWAYS) ---
-  useEffect(() => {
-    const loadSavedLibrary = async () => {
-      if (hasLoadedLibraryRef.current) {
-        console.log('[App] Skipping library load - already loaded');
-        return;
-      }
-      console.log('[App] Starting library and playlist load...');
-      hasLoadedLibraryRef.current = true;
-
-      try {
-        const [savedTracks, savedPlaylists, savedMarkers] = await Promise.all([
-          loadTracksFromIndexedDB(),
-          loadPlaylists(),
-          loadMarkers()
-        ]);
-
-        if (savedTracks.length > 0) {
-          console.log(`[App] Setting ${savedTracks.length} tracks to state`);
-          setTracks(savedTracks);
-          addToast(`Loaded ${savedTracks.length} track${savedTracks.length !== 1 ? 's' : ''} from library`);
-        }
-        if (savedPlaylists.length > 0) {
-          console.log(`[App] Setting ${savedPlaylists.length} playlists to state`);
-          setPlaylists(savedPlaylists);
-        }
-        if (savedMarkers.length > 0) {
-          console.log(`[App] Setting ${savedMarkers.length} markers to state`);
-          setMarkers(savedMarkers);
-        }
-      } catch (error) {
-        console.error('[App] Failed to load library, playlists, or markers:', error);
-        hasLoadedLibraryRef.current = false; // Reset on error
-      }
-    };
-
-    loadSavedLibrary();
-  }, []); // Run once on startup
-
-  // --- Auto-save playlists when they change ---
-  useEffect(() => {
-    // Don't save on the initial render before playlists are loaded
-    if (!hasLoadedLibraryRef.current) return;
-    savePlaylists(playlists).catch(err => console.error("Failed to save playlists", err));
-  }, [playlists]);
-
-  // --- Auto-save markers when they change ---
-  useEffect(() => {
-    if (!hasLoadedLibraryRef.current) return;
-    saveMarkers(markers).catch(err => console.error("Failed to save markers", err));
-  }, [markers]);
-
-  // --- Keyboard Shortcuts ---
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-        switch(e.key) {
-            case ' ':
-                e.preventDefault();
-                togglePlayPause();
-                break;
-            case 'ArrowLeft':
-                e.preventDefault();
-                skip(-10);
-                break;
-            case 'ArrowRight':
-                e.preventDefault();
-                skip(10);
-                break;
-            case 'ArrowUp':
-                e.preventDefault();
-                handleVolume(Math.min(1, playerState.volume + 0.1));
-                break;
-            case 'ArrowDown':
-                e.preventDefault();
-                handleVolume(Math.max(0, playerState.volume - 0.1));
-                break;
-            case 'm':
-                toggleMute();
-                break;
-            case 's':
-                setPlayerState(prev => ({ ...prev, isShuffle: !prev.isShuffle }));
-                addToast(`Shuffle ${!playerState.isShuffle ? 'On' : 'Off'}`);
-                break;
-            case 'r':
-                setPlayerState(prev => {
-                    const next = prev.repeatMode === 'off' ? 'all' : prev.repeatMode === 'all' ? 'one' : 'off';
-                    addToast(`Repeat: ${next}`);
-                    return { ...prev, repeatMode: next };
-                });
-                break;
-        }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [playerState, currentTrack]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-        if (showVisMenu && !(event.target as Element).closest('#vis-menu-container')) {
-            setShowVisMenu(false);
-        }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showVisMenu]);
-
-  // --- Actions ---
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      const files = Array.from(event.target.files) as File[];
-      
-      const imageFile = files.find(f => f.type.startsWith('image/'));
-      const audioFiles = files.filter(f => f.type.startsWith('audio/') || f.name.match(/\.(mp3|wav|ogg|flac|m4a|aac)$/i));
-      let tracksAddedCount = 0;
-
-      if (imageFile) {
-        const coverUrl = URL.createObjectURL(imageFile);
-        if (currentTrack) {
-          const updatedTrack = { ...currentTrack, coverArtUrl: coverUrl };
-          setCurrentTrack(updatedTrack);
-          setTracks(prev => prev.map(t => t.id === updatedTrack.id ? updatedTrack : t));
-          addToast("Cover art updated for current track");
-        } else {
-             setTracks(prev => prev.map(t => t.coverArtUrl ? t : { ...t, coverArtUrl: coverUrl }));
-             addToast("Cover art loaded");
-        }
-      }
-
-      if (audioFiles.length > 0) {
-        // Filter out duplicates based on file name, size, and last modified time
-        const newTracks: Track[] = audioFiles
-          .filter(file => {
-            // Check if file already exists in library
-            const isDuplicate = tracks.some(track =>
-              track.type === 'local' &&
-              track.file &&
-              track.file.name === file.name &&
-              track.file.size === file.size &&
-              track.file.lastModified === file.lastModified
-            );
-            if (isDuplicate) {
-              console.log(`Skipping duplicate: ${file.name}`);
-            }
-            return !isDuplicate;
-          })
-          .map(file => ({
-            id: generateId(),
-            file,
-            name: file.name.replace(/\.[^/.]+$/, ""),
-            artist: 'Local File',
-            url: URL.createObjectURL(file),
-            type: 'local'
-          }));
-
-        if (newTracks.length > 0) {
-          setTracks(prev => {
-            const updatedTracks = [...prev, ...newTracks];
-            saveTracksToIndexedDB(updatedTracks).catch(err => {
-              console.error("Failed to save after file upload", err);
-              addToast("Error saving library", "error");
-            });
-            return updatedTracks;
-          });
-          tracksAddedCount = newTracks.length;
-          addToast(`Added ${tracksAddedCount} track${tracksAddedCount !== 1 ? 's' : ''}`);
-        } else if (audioFiles.length > 0) {
-          addToast('All files already in library');
-        }
-      }
-    }
+  // --- Library actions ---
+  const setTrackCover = (trackId: string, coverArtUrl: string | undefined) => {
+    setTracks(prev => prev.map(t => (t.id === trackId ? { ...t, coverArtUrl } : t)));
+    setCurrentTrack(prev => (prev?.id === trackId ? { ...prev, coverArtUrl } : prev));
   };
 
-  const playTrack = async (track: Track) => {
-    // Check if this is a decentralized track that needs resolution (Magnet/IPFS)
-    // If the URL is not a blob (local) and not http (standard stream), it's likely a P2P protocol
-    const isP2P = (track as DecentralizedTrack).torrentMagnetLink || 
-                  (track as DecentralizedTrack).ipfsHash || 
-                  track.url.startsWith('magnet:') || 
-                  track.url.startsWith('ipfs://');
+  const addFiles = async (files: File[]) => {
+    const imageFile = files.find(f => f.type.startsWith('image/'));
+    const audioFiles = files.filter(f => f.type.startsWith('audio/') || AUDIO_FILE_PATTERN.test(f.name));
 
-    // If it's P2P and NOT yet resolved to a blob/http URL, resolve it first
-    if (isP2P && !track.url.startsWith('blob:') && !track.url.startsWith('http')) {
-        console.log('[Play] Intercepting P2P track for resolution...');
-        playDecentralized(track);
-        return;
-    }
+    // Data URLs (unlike blob URLs) survive a reload once persisted
+    const coverArtUrl = imageFile ? await readFileAsDataURL(imageFile).catch(() => undefined) : undefined;
 
-    if (currentTrack?.id !== track.id) {
-      console.log(`[Play] Playing ${track.type}: ${track.name}`);
-      setCurrentTrack(track);
-      playTrackAudio(track);
-    } else {
-      // If same track, just ensure it plays
-      togglePlayPauseAudio();
-    }
-  };
-
-  const togglePlayPause = async () => {
-    if (!currentTrack && tracks.length === 0) return;
-    if (!currentTrack && tracks.length > 0) {
-      playTrack(tracks[0]);
-      return;
-    }
-    togglePlayPauseAudio();
-  };
-
-  // --- Decentralized Stream Hook ---
-  const { playDecentralized, isResolving: isResolvingP2P } = useDecentralizedStream({
-    setTracks,
-    playTrack,
-    addToast
-  });
-
-  // Add track to library without playing (Steam-like "Install" later)
-  const addTrackToLibrary = (track: Track) => {
-    setTracks(prev => {
-      // Check for duplicates
-      if (prev.some(t => t.id === track.id)) return prev;
-      const updated = [...prev, track];
-      saveTracksToIndexedDB(updated).catch(err => console.error("Failed to save to library", err));
-      return updated;
-    });
-    addToast("Added to library");
-  };
-
-  const getNextTrack = useCallback((): Track | null => {
-    if (tracks.length === 0) return null;
-    if (!currentTrack) return tracks[0];
-
-    if (playerState.isShuffle) {
-        const remaining = tracks.filter(t => t.id !== currentTrack.id);
-        const randomIdx = Math.floor(Math.random() * remaining.length);
-        return remaining[randomIdx];
-    }
-
-    const currentIndex = tracks.findIndex(t => t.id === currentTrack.id);
-    const nextIndex = currentIndex + 1;
-    if (nextIndex < tracks.length) return tracks[nextIndex];
-    if (playerState.repeatMode === 'all') return tracks[0];
-    return null;
-  }, [tracks, currentTrack, playerState.isShuffle, playerState.repeatMode]);
-
-  const getPrevTrack = useCallback((): Track | null => {
-    if (tracks.length === 0) return null;
-    if (!currentTrack) return tracks[tracks.length - 1];
-    
-    if (playerState.currentTime > 3) {
-        handleSeek(0);
-        return currentTrack;
-    }
-    const currentIndex = tracks.findIndex(t => t.id === currentTrack.id);
-    const prevIndex = currentIndex - 1;
-    if (prevIndex >= 0) return tracks[prevIndex];
-    if (playerState.repeatMode === 'all') return tracks[tracks.length - 1];
-    return tracks[0];
-  }, [tracks, currentTrack, playerState.currentTime, playerState.repeatMode, handleSeek]);
-
-  const playNext = useCallback(() => {
-      const next = getNextTrack();
-      if (next) playTrack(next);
-      else addToast("End of playlist");
-      showGestureFeedback('Next Track');
-  }, [getNextTrack, addToast]);
-
-  const playPrev = useCallback(() => {
-      const prev = getPrevTrack();
-      if (prev) {
-        if (prev.id === currentTrack?.id) { } 
-        else playTrack(prev);
-      }
-      showGestureFeedback('Prev Track');
-  }, [getPrevTrack, currentTrack]);
-
-  // Update the ref for the hook
-  useEffect(() => {
-    playNextRef.current = playNext;
-  }, [playNext]);
-
-  // --- Playlist Functions ---
-
-  const createPlaylist = (name: string) => {
-    const newPlaylist: Playlist = {
-      id: generateId(),
-      name,
-      trackIds: [],
-      createdAt: Date.now()
-    };
-    setPlaylists(prev => [...prev, newPlaylist]);
-    setShowCreatePlaylist(false);
-    setNewPlaylistName('');
-    addToast(`Created playlist: ${name}`);
-  };
-
-  const deletePlaylist = (playlistId: string) => {
-    const playlist = playlists.find(p => p.id === playlistId);
-    if (playlist) {
-      setPlaylists(prev => prev.filter(p => p.id !== playlistId));
-      if (selectedPlaylist === playlistId) {
-        setSelectedPlaylist(null); // Go back to All Tracks
-      }
-      addToast(`Deleted playlist: ${playlist.name}`);
-    }
-  };
-
-  const updatePlaylistCover = (playlistId: string, imageFile: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const coverArtUrl = e.target?.result as string;
-      setPlaylists(prev => prev.map(p =>
-        p.id === playlistId ? { ...p, coverArtUrl } : p
-      ));
-      addToast('Playlist cover updated');
-    };
-    reader.readAsDataURL(imageFile);
-  };
-
-  const addTrackToPlaylist = (trackId: string, playlistId: string) => {
-    setPlaylists(prev => prev.map(p => {
-      if (p.id === playlistId && !p.trackIds.includes(trackId)) {
-        return { ...p, trackIds: [...p.trackIds, trackId] };
-      }
-      return p;
-    }));
-    const playlist = playlists.find(p => p.id === playlistId);
-    if (playlist) {
-      addToast(`Added to ${playlist.name}`);
-    }
-  };
-
-  const removeTrackFromPlaylist = (trackId: string, playlistId: string) => {
-    setPlaylists(prev => prev.map(p => {
-      if (p.id === playlistId) {
-        return { ...p, trackIds: p.trackIds.filter(id => id !== trackId) };
-      }
-      return p;
-    }));
-  };
-
-  // Get filtered tracks based on selected playlist
-  const getFilteredTracks = (): Track[] => {
-    if (!selectedPlaylist) {
-      return tracks; // All Tracks
-    }
-    const playlist = playlists.find(p => p.id === selectedPlaylist);
-    if (!playlist) return tracks;
-
-    return tracks.filter(t => playlist.trackIds.includes(t.id));
-  };
-
-  // --- Chapter Marker Functions ---
-
-  const addMarker = (timestamp: number, label?: string) => {
-    if (!currentTrack) return;
-
-    // Auto-generate label if not provided
-    const currentTrackMarkers = markers.filter(m => m.trackId === currentTrack.id);
-    const markerNumber = currentTrackMarkers.length + 1;
-    const markerLabel = label || `Marker ${markerNumber}`;
-
-    const newMarker: ChapterMarker = {
-      id: generateId(),
-      trackId: currentTrack.id,
-      timestamp,
-      label: markerLabel,
-      color: '#06b6d4' // Cyan default
-    };
-    setMarkers(prev => [...prev, newMarker]);
-  };
-
-  const updateMarkerLabel = (markerId: string, newLabel: string) => {
-    if (newLabel.trim()) {
-      setMarkers(prev => prev.map(m => m.id === markerId ? { ...m, label: newLabel.trim() } : m));
-    }
-    setEditingMarkerId(null);
-    setEditingMarkerLabel('');
-  };
-
-  const deleteMarker = (markerId: string) => {
-    setMarkers(prev => prev.filter(m => m.id !== markerId));
-  };
-
-  const jumpToMarker = (timestamp: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = timestamp;
-    }
-  };
-
-  const jumpToNextMarker = () => {
-    const currentMarkers = getCurrentTrackMarkers();
-    if (currentMarkers.length === 0) return;
-
-    const nextMarker = currentMarkers.find(m => m.timestamp > playerState.currentTime);
-    if (nextMarker) {
-      jumpToMarker(nextMarker.timestamp);
-    }
-  };
-
-  const jumpToPrevMarker = () => {
-    const currentMarkers = getCurrentTrackMarkers();
-    if (currentMarkers.length === 0) return;
-
-    // Find the last marker before current time
-    const prevMarker = [...currentMarkers].reverse().find(m => m.timestamp < playerState.currentTime - 1);
-    if (prevMarker) {
-      jumpToMarker(prevMarker.timestamp);
-    }
-  };
-
-  // Get markers for current track
-  const getCurrentTrackMarkers = (): ChapterMarker[] => {
-    if (!currentTrack) return [];
-    return markers.filter(m => m.trackId === currentTrack.id).sort((a, b) => a.timestamp - b.timestamp);
-  };
-
-  // --- Custom Album Cover ---
-  const updateTrackCover = (trackId: string, imageFile: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const coverArtUrl = e.target?.result as string;
-      setTracks(prev => prev.map(t =>
-        t.id === trackId ? { ...t, coverArtUrl } : t
-      ));
-
-      // Update current track if it's the one being modified
-      if (currentTrack?.id === trackId) {
-        setCurrentTrack(prev => prev ? { ...prev, coverArtUrl } : null);
-      }
-
-      // Persist the change
-      const updatedTracks = tracks.map(t =>
-        t.id === trackId ? { ...t, coverArtUrl } : t
+    if (audioFiles.length > 0) {
+      const isDuplicate = (file: File) => tracks.some(t =>
+        t.file && t.file.name === file.name && t.file.size === file.size
       );
-      saveTracksToIndexedDB(updatedTracks).catch(err => console.error("Failed to save cover art", err));
+      const newTracks: Track[] = audioFiles.filter(f => !isDuplicate(f)).map(file => ({
+        id: generateId(),
+        file,
+        name: file.name.replace(/\.[^/.]+$/, ''),
+        artist: 'Local File',
+        url: URL.createObjectURL(file),
+        type: 'local',
+        // A cover image dropped alongside audio (e.g. folder.jpg) belongs to those tracks
+        coverArtUrl,
+        addedAt: Date.now(),
+        tagsRead: false, // filled in by the background tag scan
+      }));
 
+      if (newTracks.length > 0) {
+        setTracks(prev => [...prev, ...newTracks]);
+        addToast(`Added ${newTracks.length} track${newTracks.length !== 1 ? 's' : ''}`);
+        // Copied music should be protected from eviction; ask while we have the user gesture
+        if (storage.status && !storage.status.persisted) storage.protect();
+      } else {
+        addToast('All files already in library');
+      }
+    } else if (coverArtUrl) {
+      if (currentTrack) {
+        setTrackCover(currentTrack.id, coverArtUrl);
+        addToast('Cover art updated for current track');
+      } else {
+        addToast('Play a track first to set its cover art');
+      }
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = ''; // allow re-selecting the same files
+    addFiles(files);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    addFiles(Array.from(e.dataTransfer.files));
+  };
+
+  const updateTrackCover = async (trackId: string, imageFile: File) => {
+    try {
+      setTrackCover(trackId, await readFileAsDataURL(imageFile));
       addToast('Album cover updated');
-    };
-    reader.readAsDataURL(imageFile);
+    } catch {
+      addToast('Failed to read image', 'error');
+    }
   };
 
   const removeTrackCover = (trackId: string) => {
-    setTracks(prev => prev.map(t =>
-      t.id === trackId ? { ...t, coverArtUrl: undefined } : t
-    ));
-
-    if (currentTrack?.id === trackId) {
-      setCurrentTrack(prev => prev ? { ...prev, coverArtUrl: undefined } : null);
-    }
-
-    const updatedTracks = tracks.map(t =>
-      t.id === trackId ? { ...t, coverArtUrl: undefined } : t
-    );
-    saveTracksToIndexedDB(updatedTracks).catch(err => console.error("Failed to remove cover art", err));
-
+    setTrackCover(trackId, undefined);
     addToast('Album cover removed');
   };
 
-  const removeTrack = (id: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-
-      const trackToRemove = tracks.find(t => t.id === id);
-      if (!trackToRemove) return;
-
-      // Revoke blob URL for the track being removed to clean up memory
-      if (trackToRemove.type === 'local' && trackToRemove.url.startsWith('blob:')) {
-        URL.revokeObjectURL(trackToRemove.url);
-      }
-
-      const tracksAfterRemoval = tracks.filter(t => t.id !== id);
-
-      // Persist the change
-      if (tracksAfterRemoval.length > 0) {
-        saveTracksToIndexedDB(tracksAfterRemoval).catch(err => console.error("Failed to save after track removal", err));
-      } else {
-        clearLibrary().catch(err => console.error("Failed to clear library", err));
-      }
-
-      // Update state
-      setTracks(tracksAfterRemoval);
-
-      // Handle playback transition
-      if (currentTrack?.id === id) {
-        const currentIndex = tracks.findIndex(t => t.id === id);
-        const nextTrack = tracksAfterRemoval[currentIndex] ?? tracksAfterRemoval[0];
-
-        if (nextTrack) {
-          playTrack(nextTrack);
-        } else {
-          // Library is now empty, stop the player
-          audioRef.current.pause();
-          audioRef.current.removeAttribute('src');
-          audioRef.current.load();
-          setCurrentTrack(null);
-          setPlayerState(prev => ({ ...prev, isPlaying: false, currentTime: 0, duration: 0 }));
-        }
-      }
+  // --- Up Next queue ---
+  const queuePlayNext = (track: Track) => {
+    setUpNext(prev => [track.id, ...prev]);
+    addToast(`"${track.name}" will play next`);
   };
 
-  // --- Backup & Restore Handlers ---
-  const handleBackupLibrary = async () => {
+  const queueAppend = (track: Track) => {
+    setUpNext(prev => [...prev, track.id]);
+    addToast(`Added "${track.name}" to queue`);
+  };
+
+  const removeTrack = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const index = tracks.findIndex(t => t.id === id);
+    if (index === -1) return;
+    const removed = tracks[index];
+    const remaining = tracks.filter(t => t.id !== id);
+
+    setTracks(remaining);
+    purgeTrackFromPlaylists(id);
+    purgeTrackMarkers(id);
+    setUpNext(prev => prev.filter(queuedId => queuedId !== id));
+
+    if (currentTrack?.id === id) {
+      const next = remaining[index] ?? remaining[0];
+      if (next && playerState.isPlaying) {
+        playTrack(next, true);
+      } else {
+        stop();
+        setCurrentTrack(null);
+      }
+    }
+
+    if (removed.url.startsWith('blob:')) URL.revokeObjectURL(removed.url);
+    if (removed.fileHandle) addToast('Removed from library. It will return on the next folder rescan unless you delete the file.');
+  };
+
+  // --- Backup & Restore ---
+  const handleExportZip = async () => {
     try {
-      const password = prompt("Enter a password to encrypt the backup (optional):");
+      setStorageBusy({ label: 'Exporting...' });
+      const result = await exportLibraryZip(tracks, (done, total) =>
+        setStorageBusy({ label: 'Exporting...', progress: done / total })
+      );
+      if (!result) return; // cancelled
+      addToast(
+        result.skipped
+          ? `Exported ${result.exported} tracks (${result.skipped} linked tracks skipped - reconnect their folder first)`
+          : `Exported ${result.exported} tracks`
+      );
+    } catch (err) {
+      console.error('Export failed', err);
+      addToast('Export failed', 'error');
+    } finally {
+      setStorageBusy(null);
+    }
+  };
+
+  const handleExportJson = async () => {
+    try {
+      const password = prompt('Enter a password to encrypt the backup (optional):');
+      if (password === null) return; // cancelled
       const json = await exportLibraryAsJSON(password || undefined);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `penko-library-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      addToast('Library backup downloaded');
-    } catch (e) {
+      downloadBlob(new Blob([json], { type: 'application/json' }), `penko-tune-info-${new Date().toISOString().slice(0, 10)}.json`);
+      addToast('Library info downloaded');
+    } catch (err) {
+      console.error('Backup failed', err);
       addToast('Failed to create backup', 'error');
     }
   };
 
-  const handleRestoreLibrary = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImport = async (file: File) => {
+    const run = (password?: string) =>
+      importLibraryFile(file, password, (done, total) => setStorageBusy({ label: 'Importing...', progress: done / total }));
+    const finish = () => {
+      addToast('Library imported! Reloading...');
+      setTimeout(() => window.location.reload(), 1200);
+    };
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const json = event.target?.result as string;
+    setStorageBusy({ label: 'Importing...' });
+    suspendSaveRef.current = true;
+    try {
+      await run();
+      finish();
+    } catch (err: any) {
+      if (err?.message !== 'PASSWORD_REQUIRED') {
+        suspendSaveRef.current = false;
+        console.error('Import failed', err);
+        addToast(err?.message?.includes('Penko Tune') ? err.message : 'Failed to import library', 'error');
+        return;
+      }
+      const password = prompt('This backup is encrypted. Enter password:');
+      if (!password) {
+        suspendSaveRef.current = false;
+        return;
+      }
       try {
-        await importLibraryFromJSON(json);
-        addToast('Library restored! Please refresh.', 'info');
-        // Optional: Trigger a reload or state refresh here
-        setTimeout(() => window.location.reload(), 1500);
-      } catch (err: any) {
-        if (err.message === "PASSWORD_REQUIRED") {
-           const password = prompt("This backup is encrypted. Enter password:");
-           if (password) {
-             try {
-               await importLibraryFromJSON(json, password);
-               addToast('Library restored! Please refresh.', 'info');
-               setTimeout(() => window.location.reload(), 1500);
-             } catch (e2: any) {
-               addToast(e2.message === "INVALID_PASSWORD" ? "Incorrect password" : "Failed to restore", 'error');
-             }
-           }
-        } else {
-           addToast('Failed to restore library', 'error');
-        }
+        await run(password);
+        finish();
+      } catch (err2: any) {
+        suspendSaveRef.current = false;
+        addToast(err2?.message === 'INVALID_PASSWORD' ? 'Incorrect password' : 'Failed to import library', 'error');
+      }
+    } finally {
+      setStorageBusy(null);
+    }
+  };
+
+  const handleDownloadTrack = async (track: Track) => {
+    if (!(await downloadTrackFile(track))) {
+      addToast(track.fileHandle ? 'Reconnect the linked folder to download this file' : 'This track has no file to download', 'error');
+    }
+  };
+
+  // --- Sharing ---
+  const shareablePlaylist = (id: string) => {
+    const playlist = playlists.find(p => p.id === id);
+    if (!playlist) return;
+    const shareTracks = playlist.trackIds
+      .map(trackId => tracksById.get(trackId))
+      .filter((t): t is Track => !!t && t.type === 'local');
+    if (shareTracks.length === 0) {
+      addToast('This playlist has no local files to share', 'error');
+      return;
+    }
+    setShareTarget({ title: playlist.name, tracks: shareTracks });
+  };
+
+  const copyShareLink = (share: { id: string; key: string }) => {
+    navigator.clipboard.writeText(buildShareLink(share))
+      .then(() => addToast('Link copied'))
+      .catch(() => addToast('Could not access the clipboard', 'error'));
+  };
+
+  const closeIncomingShare = (id: string) => {
+    sharing.closeIncoming(id);
+    setSelectedPlaylist(prev => (prev === `share:${id}` ? null : prev));
+  };
+
+  // Open share and listen-together links (#share=... / #listen=...), then drop the key from the URL
+  const openIncomingRef = useRef(sharing.openIncoming);
+  openIncomingRef.current = sharing.openIncoming;
+  useEffect(() => {
+    if (!libraryLoaded) return;
+    const handleHash = () => {
+      const share = parseShareHash(location.hash);
+      const room = share ? null : parseRoomHash(location.hash);
+      if (!share && !room) return;
+      history.replaceState(null, '', location.pathname + location.search);
+      if (share) {
+        openIncomingRef.current(share.infoHash, share.key);
+        setSelectedPlaylist(`share:${share.infoHash}`);
+        setViewMode(ViewMode.LIST);
+      } else if (room) {
+        setRoomInvite(room);
+        setShowListen(true);
       }
     };
-    reader.readAsText(file);
+    handleHash();
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, [libraryLoaded, setSelectedPlaylist]);
+
+  // --- Chapter markers ---
+  const handleAddMarker = (timestamp: number) => {
+    if (currentTrack) addMarker(currentTrack.id, timestamp);
   };
 
-  // --- Control Handlers ---
-
-  const skip = (seconds: number) => {
-      if (audioRef.current) {
-          handleSeek(audioRef.current.currentTime + seconds);
-          showGestureFeedback(seconds > 0 ? '+10s' : '-10s');
-      }
+  const jumpToNextMarker = () => {
+    const next = currentTrackMarkers.find(m => m.timestamp > playerState.currentTime);
+    if (next) seek(next.timestamp);
   };
 
-  // --- Gesture & Touch Handlers ---
+  const jumpToPrevMarker = () => {
+    // Allow a 1s grace so repeated presses step back past the marker we just jumped to
+    const prev = [...currentTrackMarkers].reverse().find(m => m.timestamp < playerState.currentTime - 1);
+    if (prev) seek(prev.timestamp);
+  };
+
+  // --- Gestures (visualizer view) ---
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastTapRef = useRef<number | null>(null);
+  const holdTimeoutRef = useRef<number | null>(null);
+
   const showGestureFeedback = (text: string) => {
-      setActiveGesture(text);
-      setTimeout(() => setActiveGesture(null), 800);
+    setActiveGesture(text);
+    setTimeout(() => setActiveGesture(null), 800);
+  };
+
+  const handleSpeedUpStart = () => {
+    if (audioRef.current.playbackRate !== 2) setPlaybackRate(2);
+  };
+
+  const handleSpeedUpEnd = () => {
+    if (audioRef.current.playbackRate !== 1) setPlaybackRate(1);
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length !== 1) return;
-
-    touchStartRef.current = {
-      x: e.touches[0].clientX,
-      y: e.touches[0].clientY,
-      time: Date.now()
-    };
-
+    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() };
     holdTimeoutRef.current = window.setTimeout(() => {
-        handleSpeedUpStart();
-        holdTimeoutRef.current = null;
-    }, 250); 
+      handleSpeedUpStart();
+      holdTimeoutRef.current = null;
+    }, 250);
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (holdTimeoutRef.current) {
-        clearTimeout(holdTimeoutRef.current);
-        holdTimeoutRef.current = null;
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
     }
-    handleSpeedUpEnd(); 
+    handleSpeedUpEnd();
 
-    if (!touchStartRef.current) return;
-    
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+
     const endX = e.changedTouches[0].clientX;
-    const endY = e.changedTouches[0].clientY;
-    const endTime = Date.now();
-    const startTime = touchStartRef.current.time;
-    
-    const dx = endX - touchStartRef.current.x;
-    const dy = endY - touchStartRef.current.y;
-    const dt = endTime - startTime;
-    const dist = Math.sqrt(dx*dx + dy*dy);
+    const dx = endX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    const dt = Date.now() - start.time;
+    const dist = Math.hypot(dx, dy);
 
+    // Horizontal swipe: change track
     if (dist > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 500) {
-        if (dx > 0) playPrev();
-        else playNext();
-        
-        touchStartRef.current = null;
-        lastTapRef.current = null;
-        return;
+      if (dx > 0) {
+        playPrev();
+        showGestureFeedback('Prev Track');
+      } else {
+        playNext();
+        showGestureFeedback('Next Track');
+      }
+      lastTapRef.current = null;
+      return;
     }
 
+    // Double tap: left/right third skips, centre toggles playback
     if (dist < 10 && dt < 250) {
-        const now = Date.now();
+      const now = Date.now();
+      if (lastTapRef.current && now - lastTapRef.current < 300) {
         const width = window.innerWidth;
-        const tapX = endX;
-
-        if (lastTapRef.current && (now - lastTapRef.current.time) < 300) {
-             if (tapX < width * 0.3) {
-                 skip(-10);
-             } else if (tapX > width * 0.7) {
-                 skip(10);
-             } else {
-                 togglePlayPause();
-                 showGestureFeedback(playerState.isPlaying ? 'Pause' : 'Play');
-             }
-             lastTapRef.current = null; 
+        if (endX < width * 0.3) {
+          skip(-SKIP_SECONDS);
+          showGestureFeedback(`-${SKIP_SECONDS}s`);
+        } else if (endX > width * 0.7) {
+          skip(SKIP_SECONDS);
+          showGestureFeedback(`+${SKIP_SECONDS}s`);
         } else {
-            lastTapRef.current = { time: now, x: tapX };
+          togglePlayPause();
+          showGestureFeedback(playerState.isPlaying ? 'Pause' : 'Play');
         }
-    }
-  };
-
-  const handleSpeedUpStart = () => {
-      if (audioRef.current && audioRef.current.playbackRate !== 2.0) {
-        audioRef.current.playbackRate = 2.0;
-        setPlayerState(prev => ({...prev, playbackRate: 2.0}));
+        lastTapRef.current = null;
+      } else {
+        lastTapRef.current = now;
       }
-  };
-
-  const handleSpeedUpEnd = () => {
-      if (audioRef.current && audioRef.current.playbackRate !== 1.0) {
-        audioRef.current.playbackRate = 1.0;
-        setPlayerState(prev => ({...prev, playbackRate: 1.0}));
-      }
-  };
-
-  // --- Sleep Timer Functions ---
-  const startSleepTimer = (minutes: number) => {
-    const endTime = Date.now() + (minutes * 60 * 1000);
-    setSleepTimerMinutes(minutes);
-    setSleepTimerEndTime(endTime);
-    setShowSleepTimer(false);
-    addToast(`Sleep timer set for ${minutes} minutes`);
-
-    // Clear any existing timer
-    if (sleepTimerIntervalRef.current) {
-      clearInterval(sleepTimerIntervalRef.current);
     }
-
-    // Check every second if timer has expired
-    sleepTimerIntervalRef.current = window.setInterval(() => {
-      if (Date.now() >= endTime) {
-        // Timer expired - pause playback
-        audioRef.current.pause();
-        setPlayerState(prev => ({ ...prev, isPlaying: false }));
-        clearSleepTimer();
-        addToast('Sleep timer ended - playback paused');
-      }
-    }, 1000);
   };
 
-  const clearSleepTimer = () => {
-    if (sleepTimerIntervalRef.current) {
-      clearInterval(sleepTimerIntervalRef.current);
-      sleepTimerIntervalRef.current = null;
-    }
-    setSleepTimerMinutes(null);
-    setSleepTimerEndTime(null);
-  };
-
-  const getRemainingTime = (): string => {
-    if (!sleepTimerEndTime) return '';
-    const remaining = Math.max(0, sleepTimerEndTime - Date.now());
-    const minutes = Math.floor(remaining / 60000);
-    const seconds = Math.floor((remaining % 60000) / 1000);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  // Update remaining time display every second
-  useEffect(() => {
-    if (sleepTimerEndTime) {
-      const interval = setInterval(() => {
-        // Force re-render to update remaining time display
-        setSleepTimerEndTime(prev => prev);
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [sleepTimerEndTime]);
+  const isVisualizer = viewMode === ViewMode.VISUALIZER;
+  const activeIncoming = selectedPlaylist?.startsWith('share:')
+    ? sharing.incoming.find(s => `share:${s.id}` === selectedPlaylist) ?? null
+    : null;
+  const CurrentVisIcon = VISUALIZER_OPTIONS.find(o => o.mode === visualizerMode)?.icon ?? BarChart2;
 
   return (
     <div className="h-screen w-screen flex flex-col bg-zinc-950 text-white font-sans select-none overflow-hidden">
-      {/* Toast Notification Container */}
-      <div className="fixed top-20 right-6 z-[60] flex flex-col gap-2 pointer-events-none">
-          {toasts.map(toast => (
-              <div key={toast.id} className={`bg-zinc-900 border ${toast.type === 'error' ? 'border-red-500/50 text-red-100' : 'border-zinc-700 text-zinc-100'} px-4 py-3 rounded-lg shadow-xl animate-in slide-in-from-right-10 fade-in duration-300 flex items-center gap-2 max-w-sm`}>
-                  <AlertCircle size={16} className={toast.type === 'error' ? 'text-red-500' : 'text-cyan-500'} />
-                  <span className="text-sm font-medium">{toast.message}</span>
-              </div>
-          ))}
+      {/* Toasts */}
+      <div data-toasts className="fixed bottom-44 md:bottom-28 right-4 md:right-6 left-4 md:left-auto z-[110] flex flex-col items-end gap-2 pointer-events-none">
+        {toasts.map(toast => (
+          <div key={toast.id} className={`bg-zinc-900 border ${toast.type === 'error' ? 'border-red-500/50 text-red-100' : 'border-zinc-700 text-zinc-100'} px-4 py-3 rounded-lg shadow-xl animate-in slide-in-from-bottom-4 fade-in duration-300 flex items-center gap-2 max-w-sm`}>
+            <AlertCircle size={16} className={toast.type === 'error' ? 'text-red-500' : 'text-cyan-500'} />
+            <span className="text-sm font-medium">{toast.message}</span>
+          </div>
+        ))}
       </div>
 
       {/* Top Bar */}
       <header className="h-16 flex items-center justify-between px-6 border-b border-zinc-900 bg-zinc-950 shrink-0 relative z-20">
         <div className="flex items-center gap-2">
-            <div className="flex items-center justify-center">
-                <img src="./penguin-tune-logo.svg" alt="Penko" className="w-14 h-14" style={{ imageRendering: 'pixelated' }} />
-            </div>
-            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent hidden sm:block">Penko-tune</h1>
+          <PenkoTuneLogo size={40} animated />
+          <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent hidden sm:block">Penko Tune</h1>
         </div>
-        
-        {/* Mobile Menu Button */}
-        <button 
-          className="md:hidden p-2 text-zinc-400 hover:text-white"
-          onClick={() => setMobileMenuOpen(true)}
-        >
+
+        <button className="md:hidden p-2 text-zinc-400 hover:text-white" onClick={() => setMobileMenuOpen(true)}>
           <Menu size={24} />
         </button>
 
         {/* Desktop Controls */}
         <div className="hidden md:flex items-center gap-4">
-           {/* Browse Music Button */}
-           <button
-             onClick={() => setShowBrowseMusic(true)}
-             className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-600 rounded-lg text-sm font-medium transition-colors"
-             title={t.browseMusic}
-           >
-             <Compass size={16} />
-             <span className="hidden sm:inline">{t.browseMusic.split(' - ')[0]}</span>
-           </button>
+          {deferredPrompt && (
+            <button
+              onClick={handleInstallClick}
+              className="flex items-center gap-2 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition-colors shadow-lg shadow-cyan-500/20"
+              title={t.installPWA}
+            >
+              <Download size={16} />
+              <span className="hidden sm:inline">{t.installPWA}</span>
+            </button>
+          )}
 
-           {/* Artist Portal Button */}
-           <button
-             onClick={() => setShowArtistPortal(true)}
-             className="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-600 rounded-lg text-sm font-medium transition-colors"
-             title={t.artistPortal}
-           >
-             <Upload size={16} />
-             <span className="hidden sm:inline">{t.artistPortal.split(' - ')[0]}</span>
-           </button>
+          {/* Tools */}
+          <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
+            <button
+              onClick={toggleKaraokeMode}
+              className={`p-2 rounded-md transition-all ${playerState.karaokeMode ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+              title={t.vocalReduction}
+            >
+              <Mic size={18} />
+            </button>
+            <button
+              onClick={() => setShowEQ(!showEQ)}
+              className={`p-2 rounded-md transition-all ${showEQ ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+              title={t.equalizer}
+            >
+              <Sliders size={18} />
+            </button>
+            <button
+              onClick={() => setShowSleepTimer(!showSleepTimer)}
+              className={`p-2 rounded-md transition-all relative ${isSleepTimerActive || showSleepTimer ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+              title={t.sleepTimer}
+            >
+              <Timer size={18} />
+              {isSleepTimerActive && (
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-cyan-500 rounded-full animate-pulse" />
+              )}
+            </button>
+            <button
+              onClick={() => setShowListen(true)}
+              className={`p-2 rounded-md transition-all relative ${listen.room.role !== 'idle' ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+              title={t.listenTogether}
+            >
+              <Users size={18} />
+              {listen.room.role !== 'idle' && (
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-cyan-500 rounded-full animate-pulse" />
+              )}
+            </button>
+            <button
+              onClick={() => setShowNetworkStream(!showNetworkStream)}
+              className={`p-2 rounded-md transition-all ${showNetworkStream ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+              title={t.networkStream}
+            >
+              <Globe size={18} />
+            </button>
+            <a
+              href={`https://github.com/NA-Ag/penko-tune#readme${currentLanguage !== 'en' ? `-${currentLanguage}` : ''}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 rounded-md transition-all text-zinc-500 hover:text-zinc-300"
+              title={t.userManual}
+            >
+              <BookOpen size={18} />
+            </a>
 
-           {/* PWA Install Button (only shown when installable) */}
-           {showInstallButton && (
-             <button
-               onClick={handleInstallClick}
-               className="flex items-center gap-2 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition-colors shadow-lg shadow-cyan-500/20"
-               title={t.installPWA}
-             >
-               <Download size={16} />
-               <span className="hidden sm:inline">{t.installPWA}</span>
-             </button>
-           )}
+            {/* Language Switcher */}
+            <div className="relative language-menu-container">
+              <button
+                onClick={() => setShowLanguageMenu(!showLanguageMenu)}
+                className={`p-2 rounded-md transition-all flex items-center gap-1 ${showLanguageMenu ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                title={t.changeLanguage}
+              >
+                <Languages size={18} />
+                <span className="text-xs font-mono uppercase">{currentLanguage}</span>
+              </button>
+              {showLanguageMenu && (
+                <div className="absolute top-full right-0 mt-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl p-2 z-50 min-w-[160px]">
+                  {(Object.keys(languageNames) as Language[]).map(code => (
+                    <button
+                      key={code}
+                      onClick={() => {
+                        setCurrentLanguage(code);
+                        setShowLanguageMenu(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-md transition-all flex items-center justify-between ${
+                        currentLanguage === code ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                      }`}
+                    >
+                      <span>{languageNames[code]}</span>
+                      {currentLanguage === code && <Check size={16} />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
-           {/* Tools */}
-           <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
-             <button
-               onClick={toggleKaraokeMode}
-               className={`p-2 rounded-md transition-all ${playerState.karaokeMode ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-               title={t.vocalReduction}
-             >
-                <Mic size={18} />
-             </button>
-             <button
-               onClick={() => setShowEQ(!showEQ)}
-               className={`p-2 rounded-md transition-all ${showEQ ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-               title={t.equalizer}
-             >
-                <Sliders size={18} />
-             </button>
-             <button
-               onClick={() => setShowSleepTimer(!showSleepTimer)}
-               className={`p-2 rounded-md transition-all relative ${sleepTimerMinutes ? 'bg-zinc-800 text-cyan-400' : showSleepTimer ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-               title={t.sleepTimer}
-             >
-                <Timer size={18} />
-                {sleepTimerMinutes && (
-                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-cyan-500 rounded-full animate-pulse" />
-                )}
-             </button>
-             {/* YouTube Streaming - Works on deployed version (CORS restriction on localhost only) */}
-             <button
-               onClick={() => setShowNetworkStream(!showNetworkStream)}
-               className={`p-2 rounded-md transition-all ${showNetworkStream ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-               title={t.networkStream}
-             >
-                <Globe size={18} />
-             </button>
-             {/* Manual/Documentation */}
-             <a
-               href={`https://github.com/NA-Ag/penko-tune#readme${currentLanguage !== 'en' ? `-${currentLanguage}` : ''}`}
-               target="_blank"
-               rel="noopener noreferrer"
-               className="p-2 rounded-md transition-all text-zinc-500 hover:text-zinc-300"
-               title={t.userManual}
-             >
-                <BookOpen size={18} />
-             </a>
-             {/* Language Switcher */}
-             <div className="relative language-menu-container">
-               <button
-                 onClick={() => setShowLanguageMenu(!showLanguageMenu)}
-                 className={`p-2 rounded-md transition-all flex items-center gap-1 ${showLanguageMenu ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                 title={t.changeLanguage}
-               >
-                  <Languages size={18} />
-                  <span className="text-xs font-mono uppercase">{currentLanguage}</span>
-               </button>
-               {showLanguageMenu && (
-                 <div className="absolute top-full right-0 mt-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl p-2 z-50 min-w-[160px]">
-                   {[
-                     { code: 'en', name: 'English' },
-                     { code: 'es', name: 'Español' },
-                     { code: 'pt', name: 'Português' },
-                     { code: 'fr', name: 'Français' },
-                     { code: 'de', name: 'Deutsch' },
-                     { code: 'it', name: 'Italiano' },
-                     { code: 'ru', name: 'Русский' },
-                     { code: 'uk', name: 'Українська' },
-                     { code: 'ja', name: '日本語' },
-                     { code: 'ko', name: '한국어' },
-                     { code: 'zh', name: '中文' },
-                   ].map(lang => (
-                     <button
-                       key={lang.code}
-                       onClick={() => {
-                         setCurrentLanguage(lang.code);
-                         setShowLanguageMenu(false);
-                         // TODO: Implement actual translation logic
-                         console.log(`Language changed to: ${lang.name}`);
-                       }}
-                       className={`w-full text-left px-3 py-2 rounded-md transition-all flex items-center justify-between ${
-                         currentLanguage === lang.code
-                           ? 'bg-zinc-800 text-cyan-400'
-                           : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
-                       }`}
-                     >
-                       <span>{lang.name}</span>
-                       {currentLanguage === lang.code && <Check size={16} />}
-                     </button>
-                   ))}
-                 </div>
-               )}
-             </div>
-           </div>
-           
-           {/* View Toggles */}
-           <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800 ml-2 relative">
-             <button
-               onClick={() => setViewMode(ViewMode.LIST)}
-               className={`p-2 rounded-md transition-all ${viewMode === ViewMode.LIST ? 'bg-zinc-800 text-cyan-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
-               title={t.listView}
-             >
-                <List size={18} />
-             </button>
+          {/* View Toggles */}
+          <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800 ml-2 relative">
+            <button
+              onClick={() => setViewMode(ViewMode.LIST)}
+              className={`p-2 rounded-md transition-all ${viewMode === ViewMode.LIST ? 'bg-zinc-800 text-cyan-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+              title={t.listView}
+            >
+              <List size={18} />
+            </button>
 
-             {/* Visualizer Dropdown Group */}
-             <div className="flex items-center border-l border-zinc-800 ml-1 pl-1 gap-1 relative" id="vis-menu-container">
-                 <button
-                   onClick={() => {
-                       setViewMode(ViewMode.VISUALIZER);
-                       setShowVisMenu(!showVisMenu);
-                   }}
-                   className={`p-2 rounded-md transition-all flex gap-1 items-center ${viewMode === ViewMode.VISUALIZER ? 'bg-zinc-800 text-cyan-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
-                   title={t.visualizerMode}
-                 >
-                    {visualizerMode === VisualizerMode.BARS && <BarChart2 size={18} />}
-                    {visualizerMode === VisualizerMode.WAVE && <Waves size={18} />}
-                    {visualizerMode === VisualizerMode.CIRCLE && <Activity size={18} />}
-                    {visualizerMode === VisualizerMode.SPIRAL && <Disc size={18} />}
-                    {visualizerMode === VisualizerMode.PARTICLES && <Sparkles size={18} />}
-                    {visualizerMode === VisualizerMode.SPECTRUM && <TrendingUp size={18} />}
-                    {visualizerMode === VisualizerMode.RINGS && <Radio size={18} />}
-                    {visualizerMode === VisualizerMode.DNA && <Dna size={18} />}
-                    <ChevronDown size={14} className={`ml-1 transition-transform ${showVisMenu ? 'rotate-180' : ''}`} />
-                 </button>
+            <div className="flex items-center border-l border-zinc-800 ml-1 pl-1 gap-1 relative" id="vis-menu-container">
+              <button
+                onClick={() => {
+                  setViewMode(ViewMode.VISUALIZER);
+                  setShowVisMenu(!showVisMenu);
+                }}
+                className={`p-2 rounded-md transition-all flex gap-1 items-center ${isVisualizer ? 'bg-zinc-800 text-cyan-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                title={t.visualizerMode}
+              >
+                <CurrentVisIcon size={18} />
+                <ChevronDown size={14} className={`ml-1 transition-transform ${showVisMenu ? 'rotate-180' : ''}`} />
+              </button>
 
-                 {/* Dropdown Menu */}
-                 {showVisMenu && (
-                    <div className="absolute top-full right-0 mt-2 w-44 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col p-1 animate-in fade-in slide-in-from-top-2 duration-200">
-                        <button
-                            onClick={() => { setVisualizerMode(VisualizerMode.BARS); setViewMode(ViewMode.VISUALIZER); setShowVisMenu(false); }}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === VisualizerMode.BARS ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
-                        >
-                            <span className="flex items-center gap-2"><BarChart2 size={16} /> Bars</span>
-                            {visualizerMode === VisualizerMode.BARS && <Check size={14} />}
-                        </button>
-                        <button
-                            onClick={() => { setVisualizerMode(VisualizerMode.SPECTRUM); setViewMode(ViewMode.VISUALIZER); setShowVisMenu(false); }}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === VisualizerMode.SPECTRUM ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
-                        >
-                            <span className="flex items-center gap-2"><TrendingUp size={16} /> Spectrum</span>
-                            {visualizerMode === VisualizerMode.SPECTRUM && <Check size={14} />}
-                        </button>
-                        <button
-                            onClick={() => { setVisualizerMode(VisualizerMode.WAVE); setViewMode(ViewMode.VISUALIZER); setShowVisMenu(false); }}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === VisualizerMode.WAVE ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
-                        >
-                            <span className="flex items-center gap-2"><Waves size={16} /> Mandala</span>
-                            {visualizerMode === VisualizerMode.WAVE && <Check size={14} />}
-                        </button>
-                        <button
-                            onClick={() => { setVisualizerMode(VisualizerMode.CIRCLE); setViewMode(ViewMode.VISUALIZER); setShowVisMenu(false); }}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === VisualizerMode.CIRCLE ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
-                        >
-                            <span className="flex items-center gap-2"><Activity size={16} /> Circle</span>
-                            {visualizerMode === VisualizerMode.CIRCLE && <Check size={14} />}
-                        </button>
-                        <button
-                            onClick={() => { setVisualizerMode(VisualizerMode.SPIRAL); setViewMode(ViewMode.VISUALIZER); setShowVisMenu(false); }}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === VisualizerMode.SPIRAL ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
-                        >
-                            <span className="flex items-center gap-2"><Disc size={16} /> Spiral</span>
-                            {visualizerMode === VisualizerMode.SPIRAL && <Check size={14} />}
-                        </button>
-                        <button
-                            onClick={() => { setVisualizerMode(VisualizerMode.PARTICLES); setViewMode(ViewMode.VISUALIZER); setShowVisMenu(false); }}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === VisualizerMode.PARTICLES ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
-                        >
-                            <span className="flex items-center gap-2"><Sparkles size={16} /> Particles</span>
-                            {visualizerMode === VisualizerMode.PARTICLES && <Check size={14} />}
-                        </button>
-                        <button
-                            onClick={() => { setVisualizerMode(VisualizerMode.RINGS); setViewMode(ViewMode.VISUALIZER); setShowVisMenu(false); }}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === VisualizerMode.RINGS ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
-                        >
-                            <span className="flex items-center gap-2"><Radio size={16} /> Rings</span>
-                            {visualizerMode === VisualizerMode.RINGS && <Check size={14} />}
-                        </button>
-                        <button
-                            onClick={() => { setVisualizerMode(VisualizerMode.DNA); setViewMode(ViewMode.VISUALIZER); setShowVisMenu(false); }}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === VisualizerMode.DNA ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
-                        >
-                            <span className="flex items-center gap-2"><Dna size={16} /> DNA</span>
-                            {visualizerMode === VisualizerMode.DNA && <Check size={14} />}
-                        </button>
-                    </div>
-                 )}
-             </div>
-           </div>
+              {showVisMenu && (
+                <div className="absolute top-full right-0 mt-2 w-44 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col p-1 animate-in fade-in slide-in-from-top-2 duration-200">
+                  {VISUALIZER_OPTIONS.map(({ mode, icon: Icon, labelKey }) => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        setVisualizerMode(mode);
+                        setViewMode(ViewMode.VISUALIZER);
+                        setShowVisMenu(false);
+                      }}
+                      className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${visualizerMode === mode ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
+                    >
+                      <span className="flex items-center gap-2"><Icon size={16} /> {t[labelKey]}</span>
+                      {visualizerMode === mode && <Check size={14} />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </header>
 
-      {/* Mobile Menu Overlay */}
       <MobileMenu
         isOpen={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
         t={t}
         expandedSection={expandedSection}
         setExpandedSection={setExpandedSection}
-        onShowBrowseMusic={() => setShowBrowseMusic(true)}
-        onShowArtistPortal={() => setShowArtistPortal(true)}
+        onFileUpload={handleFileUpload}
         onToggleKaraoke={toggleKaraokeMode}
         playerState={playerState}
         onShowEQ={() => setShowEQ(true)}
         onShowSleepTimer={() => setShowSleepTimer(true)}
         onShowNetworkStream={() => setShowNetworkStream(true)}
+        onShowStorage={() => setShowStorage(true)}
+        onShowListen={() => setShowListen(true)}
         viewMode={viewMode}
         setViewMode={setViewMode}
         visualizerMode={visualizerMode}
@@ -1182,17 +1131,23 @@ function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 flex overflow-hidden relative">
-        {/* Sidebar */}
+      <main
+        className="flex-1 flex overflow-hidden relative"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
+      >
         <Sidebar
           t={t}
-          tracksCount={tracks.length}
+          tracksCount={libraryTracks.length}
           playlists={playlists}
           selectedPlaylist={selectedPlaylist}
           showCreatePlaylist={showCreatePlaylist}
           newPlaylistName={newPlaylistName}
           currentTrack={currentTrack}
-          currentTrackMarkers={getCurrentTrackMarkers()}
+          currentTrackMarkers={currentTrackMarkers}
+          upNext={upNextTracks}
+          onRemoveFromQueue={(index) => setUpNext(prev => prev.filter((_, i) => i !== index))}
+          onClearQueue={() => setUpNext([])}
           editingMarkerId={editingMarkerId}
           editingMarkerLabel={editingMarkerLabel}
           onSetSelectedPlaylist={setSelectedPlaylist}
@@ -1206,64 +1161,108 @@ function App() {
           onUpdateMarkerLabel={updateMarkerLabel}
           onSetEditingMarkerId={setEditingMarkerId}
           onSetEditingMarkerLabel={setEditingMarkerLabel}
-          onJumpToMarker={jumpToMarker}
+          onJumpToMarker={seek}
           onDeleteMarker={deleteMarker}
-          onBackupLibrary={handleBackupLibrary}
-          onRestoreLibrary={handleRestoreLibrary}
+          canLinkFolders={canLinkFolders()}
+          onLinkFolder={linkFolder}
+          onSharePlaylist={shareablePlaylist}
+          incoming={sharing.incoming}
+          incomingTitles={Object.fromEntries(
+            sharing.incoming.flatMap(s => (s.status === 'ready' ? [[s.id, s.share.title]] : []))
+          )}
+          onCloseIncoming={closeIncomingShare}
+          outgoing={sharing.outgoing}
+          peerCounts={sharing.peerCounts}
+          onCopyShareLink={copyShareLink}
+          onStopShare={sharing.stopShare}
+          storage={storage.status}
+          storageNeedsAttention={!!storage.warning || disconnectedIds.length > 0}
+          onOpenStorage={() => setShowStorage(true)}
         />
 
-        {/* Center View - Gesture Area */}
+        {/* Center View - Gesture Area (gestures only active in visualizer view) */}
         <div
-            className="flex-1 flex flex-col bg-zinc-950 relative overflow-hidden"
-            onMouseDown={viewMode === ViewMode.VISUALIZER ? handleSpeedUpStart : undefined}
-            onMouseUp={viewMode === ViewMode.VISUALIZER ? handleSpeedUpEnd : undefined}
-            onMouseLeave={viewMode === ViewMode.VISUALIZER ? handleSpeedUpEnd : undefined}
-            onTouchStart={viewMode === ViewMode.VISUALIZER ? handleTouchStart : undefined}
-            onTouchEnd={viewMode === ViewMode.VISUALIZER ? handleTouchEnd : undefined}
+          className="flex-1 flex flex-col bg-zinc-950 relative overflow-hidden"
+          onMouseDown={isVisualizer ? handleSpeedUpStart : undefined}
+          onMouseUp={isVisualizer ? handleSpeedUpEnd : undefined}
+          onMouseLeave={isVisualizer ? handleSpeedUpEnd : undefined}
+          onTouchStart={isVisualizer ? handleTouchStart : undefined}
+          onTouchEnd={isVisualizer ? handleTouchEnd : undefined}
         >
-          {/* Gesture Feedback Overlay */}
           {activeGesture && (
-              <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none animate-out fade-out duration-700">
-                  <div className="bg-black/70 backdrop-blur-md px-6 py-4 rounded-2xl border border-white/10 flex flex-col items-center">
-                     <span className="text-2xl font-bold text-white">{activeGesture}</span>
-                  </div>
+            <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none animate-out fade-out duration-700">
+              <div className="bg-black/70 backdrop-blur-md px-6 py-4 rounded-2xl border border-white/10 flex flex-col items-center">
+                <span className="text-2xl font-bold text-white">{activeGesture}</span>
               </div>
+            </div>
           )}
 
-          {/* 2x Speed Overlay */}
           {playerState.playbackRate > 1 && (
-              <div className="absolute top-4 right-4 z-40 pointer-events-none">
-                   <div className="bg-cyan-500/20 backdrop-blur-md text-cyan-400 px-4 py-2 rounded-full flex items-center gap-2 animate-pulse border border-cyan-500/30 shadow-lg shadow-cyan-500/10">
-                        <FastForward size={18} className="fill-current" />
-                        <span className="font-bold text-sm">2x Speed</span>
-                   </div>
+            <div className="absolute top-4 right-4 z-40 pointer-events-none">
+              <div className="bg-cyan-500/20 backdrop-blur-md text-cyan-400 px-4 py-2 rounded-full flex items-center gap-2 animate-pulse border border-cyan-500/30 shadow-lg shadow-cyan-500/10">
+                <FastForward size={18} className="fill-current" />
+                <span className="font-bold text-sm">2x Speed</span>
               </div>
+            </div>
           )}
 
-          {/* P2P Resolving Overlay */}
           {isResolvingP2P && (
-              <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
-                   <div className="bg-zinc-900/80 backdrop-blur-md text-white px-6 py-3 rounded-full flex items-center gap-3 border border-zinc-700 shadow-xl animate-in slide-in-from-top-5">
-                        <Loader2 size={18} className="animate-spin text-cyan-400" />
-                        <span className="text-sm font-medium">Resolving P2P Stream...</span>
-                   </div>
+            <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+              <div className="bg-zinc-900/80 backdrop-blur-md text-white px-6 py-3 rounded-full flex items-center gap-3 border border-zinc-700 shadow-xl animate-in slide-in-from-top-5">
+                <Loader2 size={18} className="animate-spin text-cyan-400" />
+                <span className="text-sm font-medium">Resolving P2P Stream...</span>
               </div>
+            </div>
           )}
 
-          {/* Background Cover Art Blur */}
-          {currentTrack?.coverArtUrl && viewMode === ViewMode.VISUALIZER && (
-              <div 
-                className="absolute inset-0 opacity-20 pointer-events-none z-0 bg-cover bg-center blur-3xl scale-110 transition-all duration-1000"
-                style={{ backgroundImage: `url(${currentTrack.coverArtUrl})` }}
-              />
+          {currentTrack?.coverArtUrl && isVisualizer && (
+            <div
+              className="absolute inset-0 opacity-20 pointer-events-none z-0 bg-cover bg-center blur-3xl scale-110 transition-all duration-1000"
+              style={{ backgroundImage: `url(${currentTrack.coverArtUrl})` }}
+            />
           )}
 
-          {viewMode === ViewMode.LIST ? (
+          {!isVisualizer && (activeIncoming ? (
+            <IncomingShareHeader
+              t={t}
+              share={activeIncoming}
+              onSaveAll={() => sharing.saveIncoming(activeIncoming.id)}
+              onClose={() => closeIncomingShare(activeIncoming.id)}
+            />
+          ) : (
+            <StorageBanner
+              t={t}
+              warning={storage.warning}
+              disconnectedFolders={disconnectedIds.length}
+              copiedBytes={storage.copiedBytes}
+              canLinkFolders={canLinkFolders()}
+              onReconnect={reconnectFolders}
+              onOpenStorage={() => setShowStorage(true)}
+              onDismiss={storage.dismissWarning}
+            />
+          ))}
+
+          {!isVisualizer ? (
             <TrackList
-              tracks={getFilteredTracks()}
+              t={t}
+              tracks={queue}
+              totalCount={baseList.length}
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              sortKey={sortKey}
+              onSortChange={setSortKey}
+              onPlayNext={queuePlayNext}
+              onAddToQueue={queueAppend}
+              onDownload={handleDownloadTrack}
+              onShare={(track) => setShareTarget({ title: track.name, tracks: [track] })}
+              onSaveShared={(track) => track.incomingShareId && sharing.saveIncoming(track.incomingShareId, [Number(track.id.split('-').pop())])}
+              savingProgress={sharing.saving}
+              emptyMessage={activeIncoming && activeIncoming.status !== 'ready'
+                ? <IncomingShareStatus t={t} share={activeIncoming} timeoutSeconds={sharing.connectTimeoutSeconds} />
+                : undefined}
               currentTrackId={currentTrack?.id}
               isPlaying={playerState.isPlaying}
-              onSelectTrack={playTrack}
+              onSelectTrack={(track) => playTrack(track)}
               onRemoveTrack={removeTrack}
               playlists={playlists}
               onAddToPlaylist={addTrackToPlaylist}
@@ -1274,154 +1273,181 @@ function App() {
             />
           ) : (
             <div className="flex-1 p-6 flex flex-col items-center justify-center z-10">
-                {currentTrack ? (
-                    <div className="w-full h-full max-w-4xl flex flex-col gap-6">
-                        <div className="flex flex-col items-center gap-4 text-center select-none">
-                            {/* Album Art Circle */}
-                            {currentTrack.coverArtUrl && (
-                                <div className="w-32 h-32 md:w-48 md:h-48 rounded-full overflow-hidden shadow-2xl border-4 border-zinc-900/50 animate-in zoom-in duration-500">
-                                    <img src={currentTrack.coverArtUrl} alt="Cover" className="w-full h-full object-cover" />
-                                </div>
-                            )}
-                            <div>
-                                <h2 className="text-2xl md:text-3xl font-bold text-white mb-2 drop-shadow-md px-4">{currentTrack.name}</h2>
-                                <p className="text-zinc-400 text-lg">{currentTrack.artist}</p>
-                            </div>
-                        </div>
-                        <div className="flex-1 min-h-0 pointer-events-none w-full">
-                             <Visualizer analyser={analyser} isPlaying={playerState.isPlaying} mode={visualizerMode} />
-                        </div>
-                        <p className="text-center text-zinc-600 text-xs mt-2">
-                           {t.visualizerHint}
-                        </p>
+              {currentTrack ? (
+                <div className="w-full h-full max-w-4xl flex flex-col gap-6">
+                  <div className="flex flex-col items-center gap-4 text-center select-none">
+                    {currentTrack.coverArtUrl && (
+                      <div className="w-32 h-32 md:w-48 md:h-48 rounded-full overflow-hidden shadow-2xl border-4 border-zinc-900/50 animate-in zoom-in duration-500">
+                        <img src={currentTrack.coverArtUrl} alt="Cover" className="w-full h-full object-cover" />
+                      </div>
+                    )}
+                    <div>
+                      <h2 className="text-2xl md:text-3xl font-bold text-white mb-2 drop-shadow-md px-4">{currentTrack.name}</h2>
+                      <p className="text-zinc-400 text-lg">{currentTrack.artist}</p>
                     </div>
-                ) : (
-                    <div className="text-zinc-500 flex flex-col items-center gap-2">
-                        <BarChart2 size={48} className="opacity-20" />
-                        <p>{t.playToStart}</p>
-                    </div>
-                )}
+                  </div>
+                  <div className="flex-1 min-h-0 pointer-events-none w-full">
+                    <Visualizer analyser={analyser} isPlaying={playerState.isPlaying} mode={visualizerMode} />
+                  </div>
+                  <p className="text-center text-zinc-600 text-xs mt-2">{t.visualizerHint}</p>
+                </div>
+              ) : (
+                <div className="text-zinc-500 flex flex-col items-center gap-2">
+                  <BarChart2 size={48} className="opacity-20" />
+                  <p>{t.playToStart}</p>
+                </div>
+              )}
             </div>
           )}
-          
-          {/* Modals Layer */}
-          {showEQ && (
-              <Equalizer
-                bands={eqBands}
-                onBandChange={handleEQChange}
-                onReset={resetEQ}
-                onClose={() => setShowEQ(false)}
-                onLoadPreset={(presetBands) => setEqBands(presetBands)}
-              />
-          )}
-
-          {showNetworkStream && (
-            <NetworkStreamModal
-              onClose={() => setShowNetworkStream(false)}
-              setTracks={setTracks}
-              playTrack={playTrack}
-              addToast={addToast}
-              t={t}
-            />
-          )}
-
-          {/* Sleep Timer Modal */}
-          {showSleepTimer && (
-             <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-                 <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
-                     <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                         <Timer size={20} className="text-cyan-500" />
-                         {t.sleepTimer}
-                     </h3>
-
-                     {sleepTimerMinutes ? (
-                       <div className="space-y-4">
-                         <div className="text-center">
-                           <p className="text-sm text-zinc-400 mb-2">{t.timerActive}</p>
-                           <p className="text-4xl font-bold text-cyan-400 font-mono">{getRemainingTime()}</p>
-                           <p className="text-xs text-zinc-600 mt-2">{t.timerEndsPause}</p>
-                         </div>
-                         <button
-                           onClick={() => {
-                             clearSleepTimer();
-                             addToast('Sleep timer cancelled');
-                           }}
-                           className="w-full px-4 py-3 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                         >
-                           <X size={16} />
-                           {t.cancelTimer}
-                         </button>
-                       </div>
-                     ) : (
-                       <>
-                         <p className="text-xs text-zinc-500 mb-4">
-                           {t.sleepTimerDesc}
-                         </p>
-                         <div className="grid grid-cols-3 gap-2 mb-4">
-                           {[15, 30, 45, 60, 90, 120].map(minutes => (
-                             <button
-                               key={minutes}
-                               onClick={() => startSleepTimer(minutes)}
-                               className="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-medium transition-colors text-sm"
-                             >
-                               {minutes} min
-                             </button>
-                           ))}
-                         </div>
-                         <button
-                           onClick={() => setShowSleepTimer(false)}
-                           className="w-full px-4 py-2 text-sm text-zinc-400 hover:text-white"
-                         >
-                           {t.close}
-                         </button>
-                       </>
-                     )}
-                 </div>
-             </div>
-          )}
         </div>
+
+        {/* Modals (outside the gesture area so taps on them don't trigger gestures) */}
+        {showEQ && (
+          <Equalizer
+            bands={eqBands}
+            onBandChange={handleEQChange}
+            onReset={resetEQ}
+            onClose={() => setShowEQ(false)}
+            onLoadPreset={setEqBands}
+          />
+        )}
+
+        {showNetworkStream && (
+          <NetworkStreamModal
+            onClose={() => setShowNetworkStream(false)}
+            setTracks={setTracks}
+            playTrack={playTrack}
+            addToast={addToast}
+            t={t}
+          />
+        )}
+
+        {showSleepTimer && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-xl shadow-2xl w-full max-w-md">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Timer size={20} className="text-cyan-500" />
+                  {t.sleepTimer}
+                </h3>
+                <button onClick={() => setShowSleepTimer(false)} className="p-1 text-zinc-400 hover:text-white" title={t.close}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              {isSleepTimerActive ? (
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <p className="text-sm text-zinc-400 mb-2">{t.timerActive}</p>
+                    <p className="text-4xl font-bold text-cyan-400 font-mono">{formatTime(Math.ceil(sleepTimerRemainingMs / 1000))}</p>
+                    <p className="text-xs text-zinc-600 mt-2">{t.timerEndsPause}</p>
+                  </div>
+                  <button
+                    onClick={cancelSleepTimer}
+                    className="w-full px-4 py-3 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    <X size={16} />
+                    {t.cancelTimer}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-zinc-500 mb-4">{t.sleepTimerDesc}</p>
+                  <div className="grid grid-cols-3 gap-2 mb-4">
+                    {SLEEP_TIMER_OPTIONS.map(minutes => (
+                      <button
+                        key={minutes}
+                        onClick={() => startSleepTimer(minutes)}
+                        className="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-medium transition-colors text-sm"
+                      >
+                        {minutes} min
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setShowSleepTimer(false)} className="w-full px-4 py-2 text-sm text-zinc-400 hover:text-white">
+                    {t.close}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </main>
 
-      {/* Controls */}
       <PlayerControls
         playerState={playerState}
         onPlayPause={togglePlayPause}
         onNext={playNext}
         onPrev={playPrev}
-        onSeek={handleSeek}
-        onVolumeChange={handleVolume}
+        onSeek={seek}
+        onVolumeChange={setVolume}
         onToggleMute={toggleMute}
-        onToggleShuffle={() => setPlayerState(prev => ({ ...prev, isShuffle: !prev.isShuffle }))}
-        onToggleRepeat={() => setPlayerState(prev => {
-            if (prev.repeatMode === 'off') return { ...prev, repeatMode: 'all' };
-            if (prev.repeatMode === 'all') return { ...prev, repeatMode: 'one' };
-            return { ...prev, repeatMode: 'off' };
-        })}
-        onSkipForward={() => skip(10)}
-        onSkipBackward={() => skip(-10)}
-        markers={getCurrentTrackMarkers()}
-        onJumpToMarker={jumpToMarker}
-        onAddMarker={addMarker}
+        onToggleShuffle={toggleShuffle}
+        onToggleRepeat={cycleRepeat}
+        onSkipForward={() => skip(SKIP_SECONDS)}
+        onSkipBackward={() => skip(-SKIP_SECONDS)}
+        markers={currentTrackMarkers}
+        onJumpToMarker={seek}
+        onAddMarker={handleAddMarker}
         onNextMarker={jumpToNextMarker}
         onPrevMarker={jumpToPrevMarker}
-        hasTrack={!!currentTrack}
+        currentTrack={currentTrack}
+        nothingPlayingLabel={t.nothingPlaying}
       />
-
-      {/* Artist Portal Modal */}
-      {showArtistPortal && (
-        <ArtistPortal
-          onClose={() => setShowArtistPortal(false)}
-          addToast={addToast}
+      {showStorage && (
+        <StorageDialog
+          t={t}
+          status={storage.status}
+          copiedBytes={storage.copiedBytes}
+          trackCount={libraryTracks.length}
+          folders={folders}
+          disconnectedIds={disconnectedIds}
+          scanningIds={scanningIds}
+          canInstall={!!deferredPrompt}
+          busy={storageBusy}
+          onProtect={async () => {
+            const granted = await storage.protect();
+            addToast(granted ? 'Library protected' : 'The browser declined. Installing the app usually helps.', granted ? 'info' : 'error');
+          }}
+          onInstall={handleInstallClick}
+          onExportZip={handleExportZip}
+          onExportJson={handleExportJson}
+          onImport={handleImport}
+          onLinkFolder={linkFolder}
+          onReconnect={reconnectFolders}
+          onRescan={rescanFolder}
+          onUnlink={unlinkFolder}
+          onClose={() => setShowStorage(false)}
         />
       )}
 
-      {/* Browse Music Modal */}
-      {showBrowseMusic && (
-        <BrowseMusic
-          onClose={() => setShowBrowseMusic(false)}
-          onPlayTrack={playTrack} // Use main playTrack which now handles routing
-          onAddToLibrary={addTrackToLibrary}
-          addToast={addToast}
+      {shareTarget && (
+        <ShareDialog
+          t={t}
+          title={shareTarget.title}
+          trackCount={shareTarget.tracks.length}
+          onCreate={(mode) => sharing.createShare(shareTarget.tracks, shareTarget.title, mode)}
+          onClose={() => setShareTarget(null)}
+        />
+      )}
+
+      {showListen && (
+        <ListenTogetherDialog
+          t={t}
+          room={listen.room}
+          pendingInvite={!!roomInvite}
+          guestVolume={listen.guestVolume}
+          onHost={() => listen.host().catch(err => {
+            console.error('[Listen] Could not start session', err);
+            addToast('Could not start a session', 'error');
+          })}
+          onJoin={() => {
+            if (roomInvite) listen.join(roomInvite.roomId, roomInvite.password);
+            setRoomInvite(null);
+          }}
+          onLeave={listen.leave}
+          onGuestVolume={listen.changeGuestVolume}
+          onClose={() => setShowListen(false)}
         />
       )}
     </div>

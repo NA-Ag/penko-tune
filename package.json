@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Privacy-first, open-source music player - A true Spotify alternative",
   "author": "Penko Software <contact@penkosoftware.org>",
-  "main": "electron/main.js",
+  "main": "electron/main.cjs",
   "repository": {
     "type": "git",
     "url": "https://github.com/NA-Ag/penko-tune"
@@ -20,18 +20,20 @@
     "electron:build": "npm run build && electron-builder"
   },
   "dependencies": {
-    "@helia/unixfs": "^6.0.4",
-    "@storacha/client": "^1.8.26",
+    "@trystero-p2p/torrent": "^0.25.4",
     "d3": "^7.9.0",
-    "helia": "^6.0.14",
+    "fflate": "^0.8.3",
     "lucide-react": "^0.562.0",
-    "qrcode.react": "^4.2.0",
+    "music-metadata": "^11.16.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "webtorrent": "^2.8.5"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.0.0",
     "buffer": "^6.0.3",
     "concurrently": "^9.2.1",
@@ -43,6 +45,7 @@
     "process": "^0.11.10",
     "sharp": "^0.33.5",
     "stream-browserify": "^3.0.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "~5.8.2",
     "util": "^0.12.5",
     "vite": "^6.2.0",
@@ -61,7 +64,10 @@
       "electron/**/*"
     ],
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Audio"
     },
     "win": {

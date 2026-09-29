@@ -1,21 +1,23 @@
 import React from 'react';
-import { X, Compass, ChevronDown, Upload, Sliders, Mic, Timer, Globe, Layout, List, Activity, BarChart2, Waves, Disc, Sparkles, TrendingUp, Radio, Dna, Languages } from 'lucide-react';
+import { X, Compass, ChevronDown, Plus, HardDrive, Users, Sliders, Mic, Timer, Globe, Layout, List, Activity, Languages } from 'lucide-react';
 import { PlayerState, ViewMode, VisualizerMode } from '../types';
-import { Language } from '../translations';
+import { Language, Translation, languageNames } from '../translations';
+import { VISUALIZER_OPTIONS } from './visualizerOptions';
 
 interface MobileMenuProps {
   isOpen: boolean;
   onClose: () => void;
-  t: any;
+  t: Translation;
   expandedSection: string | null;
   setExpandedSection: (section: string | null) => void;
-  onShowBrowseMusic: () => void;
-  onShowArtistPortal: () => void;
+  onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onToggleKaraoke: () => void;
   playerState: PlayerState;
   onShowEQ: () => void;
   onShowSleepTimer: () => void;
   onShowNetworkStream: () => void;
+  onShowStorage: () => void;
+  onShowListen: () => void;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
   visualizerMode: VisualizerMode;
@@ -30,13 +32,14 @@ export function MobileMenu({
   t,
   expandedSection,
   setExpandedSection,
-  onShowBrowseMusic,
-  onShowArtistPortal,
+  onFileUpload,
   onToggleKaraoke,
   playerState,
   onShowEQ,
   onShowSleepTimer,
   onShowNetworkStream,
+  onShowStorage,
+  onShowListen,
   viewMode,
   setViewMode,
   visualizerMode,
@@ -71,19 +74,24 @@ export function MobileMenu({
           
           {expandedSection === 'navigation' && (
             <div className="p-4 grid grid-cols-1 gap-3 bg-zinc-900/30">
-              <button onClick={() => { onShowBrowseMusic(); onClose(); }} className="w-full flex items-center gap-3 p-4 bg-zinc-900 rounded-xl active:bg-zinc-800 border border-zinc-800">
-                <Compass size={24} className="text-cyan-400" />
-                <div className="flex flex-col items-start">
-                  <span className="font-medium text-white">{t.browseMusic.split(' - ')[0]}</span>
-                  <span className="text-xs text-zinc-500">{t.discoverArtists}</span>
-                </div>
+              <label className="w-full flex items-center gap-3 p-4 bg-zinc-900 rounded-xl active:bg-zinc-800 border border-zinc-800 cursor-pointer">
+                <Plus size={24} className="text-cyan-400" />
+                <span className="font-medium text-white">{t.addFiles}</span>
+                <input
+                  type="file"
+                  accept="audio/*,image/*,.flac,.ogg,.m4a,.aac"
+                  multiple
+                  onChange={(e) => { onFileUpload(e); onClose(); }}
+                  className="hidden"
+                />
+              </label>
+              <button onClick={() => { onShowListen(); onClose(); }} className="w-full flex items-center gap-3 p-4 bg-zinc-900 rounded-xl active:bg-zinc-800 border border-zinc-800">
+                <Users size={24} className="text-cyan-400" />
+                <span className="font-medium text-white">{t.listenTogether}</span>
               </button>
-              <button onClick={() => { onShowArtistPortal(); onClose(); }} className="w-full flex items-center gap-3 p-4 bg-zinc-900 rounded-xl active:bg-zinc-800 border border-zinc-800">
-                <Upload size={24} className="text-purple-400" />
-                <div className="flex flex-col items-start">
-                  <span className="font-medium text-white">{t.artistPortal.split(' - ')[0]}</span>
-                  <span className="text-xs text-zinc-500">{t.uploadYourMusic}</span>
-                </div>
+              <button onClick={() => { onShowStorage(); onClose(); }} className="w-full flex items-center gap-3 p-4 bg-zinc-900 rounded-xl active:bg-zinc-800 border border-zinc-800">
+                <HardDrive size={24} className="text-cyan-400" />
+                <span className="font-medium text-white">{t.storageTitle}</span>
               </button>
             </div>
           )}
@@ -151,23 +159,14 @@ export function MobileMenu({
               {/* Visualizer Options Grid */}
               {viewMode === ViewMode.VISUALIZER && (
                 <div className="grid grid-cols-4 gap-2 animate-in fade-in slide-in-from-top-2">
-                   {[
-                     { mode: VisualizerMode.BARS, icon: BarChart2, label: t.visBars },
-                     { mode: VisualizerMode.WAVE, icon: Waves, label: t.visWave },
-                     { mode: VisualizerMode.CIRCLE, icon: Activity, label: t.visCircle },
-                     { mode: VisualizerMode.SPIRAL, icon: Disc, label: t.visSpiral },
-                     { mode: VisualizerMode.PARTICLES, icon: Sparkles, label: t.visStars },
-                     { mode: VisualizerMode.SPECTRUM, icon: TrendingUp, label: t.visSpec },
-                     { mode: VisualizerMode.RINGS, icon: Radio, label: t.visRings },
-                     { mode: VisualizerMode.DNA, icon: Dna, label: t.visDNA },
-                   ].map(({ mode, icon: Icon, label }) => (
+                   {VISUALIZER_OPTIONS.map(({ mode, icon: Icon, labelKey }) => (
                      <button
                        key={mode}
                        onClick={() => { setVisualizerMode(mode); onClose(); }}
                        className={`flex flex-col items-center justify-center gap-1 p-2 rounded-lg border aspect-square transition-all ${visualizerMode === mode ? 'bg-zinc-800 border-cyan-500/50 text-cyan-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}
                      >
                        <Icon size={20} />
-                       <span className="text-[9px] font-medium">{label}</span>
+                       <span className="text-[9px] font-medium">{t[labelKey]}</span>
                      </button>
                    ))}
                 </div>
@@ -188,25 +187,14 @@ export function MobileMenu({
           
           {expandedSection === 'language' && (
             <div className="p-4 grid grid-cols-4 gap-2 bg-zinc-900/30">
-              {[
-                   { code: 'en', name: 'EN' },
-                   { code: 'es', name: 'ES' },
-                   { code: 'pt', name: 'PT' },
-                   { code: 'fr', name: 'FR' },
-                   { code: 'de', name: 'DE' },
-                   { code: 'it', name: 'IT' },
-                   { code: 'ru', name: 'RU' },
-                   { code: 'uk', name: 'UK' },
-                   { code: 'ja', name: 'JA' },
-                   { code: 'ko', name: 'KO' },
-                   { code: 'zh', name: 'ZH' },
-                 ].map(lang => (
+              {(Object.keys(languageNames) as Language[]).map(code => (
                 <button
-                  key={lang.code}
-                  onClick={() => { setCurrentLanguage(lang.code as Language); onClose(); }}
-                  className={`py-2 rounded-lg text-xs font-bold border ${currentLanguage === lang.code ? 'bg-cyan-900/30 border-cyan-500/50 text-cyan-400' : 'bg-zinc-900 border-zinc-800 text-zinc-400'}`}
+                  key={code}
+                  onClick={() => { setCurrentLanguage(code); onClose(); }}
+                  title={languageNames[code]}
+                  className={`py-2 rounded-lg text-xs font-bold border uppercase ${currentLanguage === code ? 'bg-cyan-900/30 border-cyan-500/50 text-cyan-400' : 'bg-zinc-900 border-zinc-800 text-zinc-400'}`}
                 >
-                  {lang.name}
+                  {code}
                 </button>
               ))}
             </div>

@@ -1,6 +1,6 @@
-import React from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, Repeat, RotateCcw, RotateCw, FastForward, Bookmark } from 'lucide-react';
-import { PlayerState, ChapterMarker } from '../types';
+import React, { useState } from 'react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, Repeat, RotateCcw, RotateCw, FastForward, Bookmark, Music } from 'lucide-react';
+import { PlayerState, ChapterMarker, Track } from '../types';
 import { formatTime } from '../utils/formatters';
 
 interface PlayerControlsProps {
@@ -20,7 +20,8 @@ interface PlayerControlsProps {
   onAddMarker?: (timestamp: number) => void;
   onNextMarker?: () => void;
   onPrevMarker?: () => void;
-  hasTrack?: boolean;
+  currentTrack: Track | null;
+  nothingPlayingLabel: string;
 }
 
 const PlayerControls: React.FC<PlayerControlsProps> = ({
@@ -40,46 +41,66 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   onAddMarker,
   onNextMarker,
   onPrevMarker,
-  hasTrack = false,
+  currentTrack,
+  nothingPlayingLabel,
 }) => {
-  // Helper to render the seek bar to avoid duplication between mobile/desktop layouts
-  const handleSeekBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!hasTrack) return;
+  const hasTrack = !!currentTrack;
+  // While dragging, show the drag position instead of the playback position
+  const [dragTime, setDragTime] = useState<number | null>(null);
+  const shownTime = dragTime ?? playerState.currentTime;
 
-    const seekBar = e.currentTarget;
-    const rect = seekBar.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const percentage = clickX / rect.width;
-    const timestamp = percentage * (playerState.duration || 0);
+  const timeAt = (e: React.PointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    return pct * (playerState.duration || 0);
+  };
 
-    // Right-click or Ctrl+Click to add marker
-    if (e.button === 2 || e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      onAddMarker?.(timestamp);
-    } else {
-      // Left-click to seek
-      onSeek(timestamp);
-    }
+  // Drag to seek (mouse, touch and pen); commits on release
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!hasTrack || e.button !== 0 || e.ctrlKey || e.metaKey) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragTime(timeAt(e));
+  };
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragTime !== null) setDragTime(timeAt(e));
+  };
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragTime === null) return;
+    onSeek(timeAt(e));
+    setDragTime(null);
+  };
+
+  // Right-click or Ctrl/Cmd+click adds a chapter marker
+  const handleAddMarker = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (hasTrack) onAddMarker?.(timeAt(e));
   };
 
   const renderSeekBar = () => (
     <div className="w-full flex items-center gap-3 text-xs text-zinc-400 font-mono">
-      <span className="w-10 text-right">{formatTime(playerState.currentTime)}</span>
+      <span className="w-10 text-right">{formatTime(shownTime)}</span>
       <div
-        className="relative flex-1 group h-4 flex items-center cursor-pointer"
-        onClick={handleSeekBarClick}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          handleSeekBarClick(e as any);
-        }}
-        title={hasTrack ? "Click to seek • Right-click to add marker" : ""}
+        className="relative flex-1 group h-4 flex items-center cursor-pointer touch-none"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={() => setDragTime(null)}
+        onClick={(e) => (e.ctrlKey || e.metaKey) && handleAddMarker(e)}
+        onContextMenu={handleAddMarker}
+        title={hasTrack ? "Click or drag to seek • Right-click to add marker" : ""}
       >
         <div className="absolute inset-0 bg-zinc-800 rounded-full h-1 my-auto overflow-hidden pointer-events-none">
             <div
-                className="h-full bg-cyan-500 rounded-full group-hover:bg-cyan-400 transition-all duration-75 ease-linear"
-                style={{ width: `${(playerState.currentTime / (playerState.duration || 1)) * 100}%` }}
+                className="h-full bg-cyan-500 rounded-full group-hover:bg-cyan-400"
+                style={{ width: `${(shownTime / (playerState.duration || 1)) * 100}%` }}
             ></div>
         </div>
+        {hasTrack && (
+          <div
+            className={`absolute w-3 h-3 bg-white rounded-full shadow pointer-events-none -translate-x-1/2 transition-opacity ${dragTime !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            style={{ left: `${(shownTime / (playerState.duration || 1)) * 100}%` }}
+          />
+        )}
 
         {/* Chapter Markers */}
         {markers.map((marker) => {
@@ -87,6 +108,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
           return (
             <div
               key={marker.id}
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onJumpToMarker?.(marker.timestamp);
@@ -107,21 +129,38 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   return (
     <div className="bg-zinc-900 border-t border-zinc-800 flex flex-col md:flex-row items-center justify-between px-4 md:px-6 py-3 md:py-0 md:h-24 shrink-0 z-50 select-none gap-3 md:gap-0">
       
-      {/* Track Info Placeholder (Left) - Desktop Only */}
-      <div className="w-1/4 hidden md:flex items-center gap-3">
-         {playerState.playbackRate !== 1 && (
-             <div className="flex items-center gap-1.5 px-3 py-1 bg-cyan-500/10 text-cyan-400 rounded-full text-xs font-bold animate-pulse">
-                <FastForward size={14} />
-                {playerState.playbackRate}x
-             </div>
-         )}
+      {/* Now Playing (Left) - Desktop Only */}
+      <div className="w-1/4 hidden md:flex items-center gap-3 min-w-0">
+        <div className="w-14 h-14 rounded-md overflow-hidden bg-zinc-800 flex items-center justify-center shrink-0">
+          {currentTrack?.coverArtUrl ? (
+            <img src={currentTrack.coverArtUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <Music size={20} className="text-zinc-600" />
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-white truncate">{currentTrack?.name ?? nothingPlayingLabel}</p>
+          {currentTrack && <p className="text-xs text-zinc-400 truncate">{currentTrack.artist || 'Unknown Artist'}</p>}
+        </div>
+        {playerState.playbackRate !== 1 && (
+          <div className="flex items-center gap-1 px-2 py-0.5 bg-cyan-500/10 text-cyan-400 rounded-full text-xs font-bold animate-pulse shrink-0">
+            <FastForward size={12} />
+            {playerState.playbackRate}x
+          </div>
+        )}
       </div>
 
       {/* Main Controls (Center) - Adaptive Layout */}
       <div className="flex flex-col items-center w-full md:w-2/4 gap-3 md:gap-2">
         
-        {/* Mobile: Seek Bar on Top */}
-        <div className="md:hidden w-full">
+        {/* Mobile: Now Playing + Seek Bar on Top */}
+        <div className="md:hidden w-full space-y-1">
+          {currentTrack && (
+            <p className="text-sm text-center truncate">
+              <span className="text-white font-medium">{currentTrack.name}</span>
+              {currentTrack.artist && <span className="text-zinc-500"> · {currentTrack.artist}</span>}
+            </p>
+          )}
           {renderSeekBar()}
         </div>
 

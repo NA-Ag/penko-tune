@@ -1,12 +1,12 @@
 # Penko-tune Deployment Guide
 
-Complete guide to deploying Penko-tune with full YouTube streaming support.
+Complete guide to deploying Penko-tune as a static site.
 
 ---
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - Git repository on GitHub
 - (Optional) Custom domain
 
@@ -230,7 +230,8 @@ After deployment, verify these features work:
 
 - [ ] Local file upload (file picker)
 - [ ] Folder import
-- [ ] **YouTube streaming** (paste a YouTube URL)
+- [ ] Network stream (paste a direct audio URL)
+- [ ] Library, playlists and markers survive a page reload
 - [ ] Equalizer controls
 - [ ] Visualizer modes
 - [ ] Gesture controls (swipe, double-tap)
@@ -241,21 +242,6 @@ After deployment, verify these features work:
 ---
 
 ## Troubleshooting
-
-### YouTube Streaming Not Working
-
-**Issue:** "Could not find audio stream"
-
-**Causes:**
-1.  **Localhost** - Expected! Works only when deployed
-2. ❌ **Invalid video** - Try a different YouTube URL
-3. ❌ **Regional restrictions** - Video blocked in some countries
-4. ❌ **Privacy frontends down** - Piped/Invidious instances sometimes go offline
-
-**Solutions:**
-- Deploy to GitHub Pages/Vercel/Netlify
-- Wait a few minutes (instances may be temporarily down)
-- Try different videos
 
 ### 404 on GitHub Pages
 
@@ -289,7 +275,7 @@ npm run build
 - No API keys needed
 - No user data collected
 - All processing client-side
-- YouTube via privacy frontends (Piped/Invidious)
+- No third-party proxies: network streams are fetched directly by the browser
 
 **HTTPS is automatic** on:
 - GitHub Pages
@@ -363,11 +349,11 @@ Value: yourusername.github.io
 
 ### Fully Functional Features
 
-- **YouTube Streaming** - Ad-free, privacy-focused
+- Network streams (direct URLs, internet radio) and magnet links
 - Local file playback
 - Folder import
 - Equalizer (10-band)
-- 4 visualizer modes
+- 8 visualizer modes
 - Gesture controls
 - Keyboard shortcuts
 - PWA installation
@@ -376,13 +362,11 @@ Value: yourusername.github.io
 
 ### 🔜 Coming Soon (Phase 2+)
 
-- WebTorrent integration
-- IPFS music hosting
-- Lightning payments
-- Federation
-- Plugins
+- Tag reading and library search
+- Encrypted track & playlist sharing links
+- Listen-together rooms
 
-See [UPGRADE_PROPOSAL.md](UPGRADE_PROPOSAL.md) for roadmap!
+See [ROADMAP.md](ROADMAP.md) for details.
 
 ---
 
@@ -391,7 +375,7 @@ See [UPGRADE_PROPOSAL.md](UPGRADE_PROPOSAL.md) for roadmap!
 **Issues deploying?**
 - Check [GitHub Issues](https://github.com/yourusername/penko-tune/issues)
 - Join the community (coming soon!)
-- Read the [UPGRADE_PROPOSAL.md](UPGRADE_PROPOSAL.md)
+- Read the [ROADMAP.md](ROADMAP.md)
 
 ---
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { VisualizerMode } from '../types';
 
@@ -10,17 +10,29 @@ interface VisualizerProps {
 
 const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying, mode }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const animationRef = useRef<number>();
+  const animationRef = useRef<number | undefined>(undefined);
   
   // Store previous frame data for smoothing (linear interpolation)
   const prevDataRef = useRef<Float32Array>(new Float32Array(0));
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  // Re-render the scene when the container is resized
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      setSize({ width: el.clientWidth, height: el.clientHeight });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!analyser || !svgRef.current) return;
 
     const svg = d3.select(svgRef.current);
-    const width = svgRef.current.clientWidth || 0;
-    const height = svgRef.current.clientHeight || 0;
+    const { width, height } = size;
+    if (!width || !height) return;
     
     // Clear previous elements when mode or dimensions change
     svg.selectAll("*").remove();
@@ -43,11 +55,9 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying, mode }) =>
         .interpolator(d3.interpolateCool);
 
     const renderFrame = () => {
-      if (!isPlaying && mode !== VisualizerMode.CIRCLE && mode !== VisualizerMode.SPIRAL && mode !== VisualizerMode.WAVE) { 
-         if (!isPlaying) {
-             cancelAnimationFrame(animationRef.current!);
-             return;
-         }
+      // Circle, Spiral and Mandala keep animating (decaying to rest) while paused; others freeze
+      if (!isPlaying && mode !== VisualizerMode.CIRCLE && mode !== VisualizerMode.SPIRAL && mode !== VisualizerMode.WAVE) {
+        return;
       }
       
       // 1. Get Raw Data
@@ -551,7 +561,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying, mode }) =>
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [analyser, isPlaying, mode]);
+  }, [analyser, isPlaying, mode, size]);
 
   return (
     <div className="w-full h-full flex items-center justify-center p-0 md:p-8 rounded-xl overflow-hidden relative">
