@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Track, Playlist } from '../types';
-import { Music, Play, Trash2, MoreVertical, Plus, X, Image, Cloud, Search, ListStart, ListEnd, Download, Share2, Link2, Users, Loader2 } from 'lucide-react';
+import { Music, Play, Trash2, MoreVertical, Plus, X, Image, Cloud, Search, ListStart, ListEnd, Download, Share2, Link2, Users, Loader2, Pencil } from 'lucide-react';
 import { formatTime } from '../utils/formatters';
 import type { SortKey } from '../utils/preferences';
 import type { Translation } from '../translations';
@@ -29,6 +29,7 @@ interface TrackListProps {
   onDownload: (track: Track) => void;
   onShare: (track: Track) => void;
   onSaveShared: (track: Track) => void;
+  onEditInfo: (track: Track) => void;
   /** Save progress (0..1) for received tracks being saved. */
   savingProgress: Record<string, number>;
   /** Replaces the default empty-state message (e.g. while connecting to a share). */
@@ -68,6 +69,7 @@ const TrackList: React.FC<TrackListProps> = ({
   onDownload,
   onShare,
   onSaveShared,
+  onEditInfo,
   savingProgress,
   emptyMessage,
 }) => {
@@ -200,7 +202,7 @@ const TrackList: React.FC<TrackListProps> = ({
                             <label className={`${menuItemClass} cursor-pointer`}>
                               <input type="file" accept="image/*" className="hidden" onChange={(e) => handleCoverUpload(track.id, e)} />
                               <Image size={14} />
-                              {track.coverArtUrl ? 'Change Cover' : 'Add Cover'}
+                              {track.coverArtUrl ? t.changeCover : t.addCover}
                             </label>
                             {track.coverArtUrl && (
                               <button
@@ -208,7 +210,7 @@ const TrackList: React.FC<TrackListProps> = ({
                                 className={`${menuItemClass} text-red-400`}
                               >
                                 <X size={14} />
-                                Remove Cover
+                                {t.removeCover}
                               </button>
                             )}
                           </div>
@@ -227,7 +229,7 @@ const TrackList: React.FC<TrackListProps> = ({
                           ) : track.fileHandle ? (
                             <Link2 size={12} className={`shrink-0 ${track.url ? 'text-zinc-500' : 'text-amber-500'}`} />
                           ) : null}
-                          {track.artist || 'Unknown Artist'}
+                          {track.artist || t.unknownArtist}
                         </span>
                       </div>
                     </td>
@@ -266,6 +268,9 @@ const TrackList: React.FC<TrackListProps> = ({
                                 )
                               ) : (
                                 <>
+                                  <button onClick={(e) => runMenuAction(e, () => onEditInfo(track))} className={menuItemClass}>
+                                    <Pencil size={14} /> {t.editInfo}
+                                  </button>
                                   {track.type === 'local' && (
                                     <>
                                       <button onClick={(e) => runMenuAction(e, () => onShare(track))} className={menuItemClass}>

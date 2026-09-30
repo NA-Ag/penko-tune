@@ -6,7 +6,8 @@
 // the key in its #fragment: https://tune.penkosoftware.org/#share=<infohash>.<key>
 import type { Instance, Torrent, TorrentFile } from 'webtorrent';
 import type { Track, ShareMode, OutgoingShare } from '../types';
-import { getWebTorrentClient, PUBLIC_WEBSOCKET_TRACKERS } from './webtorrent';
+import { getWebTorrentClient } from './webtorrent';
+import { getTrackers } from './network';
 import {
   generateShareKey, importShareKey, sealFile, openRange, plainSizeOf,
   toBase64Url, fromBase64Url, MANIFEST_FILE_INDEX,
@@ -15,7 +16,7 @@ import { getTrackFile } from './libraryArchive';
 
 const TORRENT_NAME = 'penko-share';
 const MANIFEST_NAME = 'manifest.bin';
-export const CONNECT_TIMEOUT_MS = 45_000;
+export const CONNECT_TIMEOUT_MS = 60_000; // total across retries (3 x 20s)
 
 export interface SharedTrackInfo {
   name: string;
@@ -49,7 +50,7 @@ export const parseShareHash = (hash: string): { infoHash: string; key: string } 
 
 const magnetFor = (infoHash: string) =>
   `magnet:?xt=urn:btih:${infoHash}&dn=${TORRENT_NAME}` +
-  PUBLIC_WEBSOCKET_TRACKERS.map(t => `&tr=${encodeURIComponent(t)}`).join('');
+  getTrackers().map(t => `&tr=${encodeURIComponent(t)}`).join('');
 
 // --- Sending ---
 
@@ -68,7 +69,7 @@ const trackInfo = (track: Track, file: File): SharedTrackInfo => ({
 
 const seedFiles = (client: Instance, files: File[]): Promise<Torrent> =>
   new Promise((resolve, reject) => {
-    const torrent = client.seed(files, { name: TORRENT_NAME, announce: PUBLIC_WEBSOCKET_TRACKERS }, resolve);
+    const torrent = client.seed(files, { name: TORRENT_NAME, announce: getTrackers() }, resolve);
     torrent.once('error', (err: Error | string) => reject(typeof err === 'string' ? new Error(err) : err));
   });
 
@@ -144,15 +145,19 @@ export interface IncomingShare {
   readFile: (index: number, onProgress?: (fraction: number) => void) => Promise<File>;
 }
 
-const addTorrent = (client: Instance, infoHash: string): Promise<Torrent> =>
+const ATTEMPT_MS = 20_000;
+const ATTEMPTS = 3;
+
+/** One attempt to reach the sender and fetch the torrent's metadata. */
+const addTorrentOnce = (client: Instance, infoHash: string): Promise<Torrent> =>
   new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       client.remove(infoHash).catch(() => {});
       reject(new Error('TIMEOUT'));
-    }, CONNECT_TIMEOUT_MS);
+    }, ATTEMPT_MS);
     const torrent = client.add(
       magnetFor(infoHash),
-      { announce: PUBLIC_WEBSOCKET_TRACKERS, deselect: true }, // only download what gets played/saved
+      { announce: getTrackers(), deselect: true }, // only download what gets played/saved
       t => { clearTimeout(timeout); resolve(t); }
     );
     torrent.once('error', (err: Error | string) => {
@@ -160,6 +165,22 @@ const addTorrent = (client: Instance, infoHash: string): Promise<Torrent> =>
       reject(typeof err === 'string' ? new Error(err) : err);
     });
   });
+
+/**
+ * Tracker discovery occasionally misses the first announce, and trackers may not ask for another
+ * for minutes. Re-adding the torrent announces afresh, which usually connects on the next try.
+ */
+const addTorrent = async (client: Instance, infoHash: string): Promise<Torrent> => {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await addTorrentOnce(client, infoHash);
+    } catch (err) {
+      if ((err as Error).message !== 'TIMEOUT' || attempt >= ATTEMPTS) throw err;
+      // client.remove() is async; let it finish before adding the same torrent again
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+};
 
 /** Read sealed bytes [start, end] of a torrent file. (end is never 0: a sealed chunk is at least 16 bytes.) */
 const readSealed = (file: TorrentFile) => (start: number, end: number): Promise<ArrayBuffer> =>

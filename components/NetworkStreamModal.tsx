@@ -40,7 +40,7 @@ export function NetworkStreamModal({ onClose, setTracks, playTrack, addToast, t 
             value={networkUrl}
             onChange={(e) => setNetworkUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addNetworkStream()}
-            placeholder="https://example.com/stream.mp3 or magnet:?xt=..."
+            placeholder={t.networkPlaceholder}
             className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500"
             autoFocus
           />

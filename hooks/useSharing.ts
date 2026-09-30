@@ -7,6 +7,7 @@ import {
 } from '../utils/sharing';
 import { getWebTorrentClient } from '../utils/webtorrent';
 import { generateId } from '../utils/audio';
+import { tr } from '../utils/i18n';
 
 export type IncomingState =
   | { id: string; status: 'connecting' }
@@ -104,7 +105,7 @@ export function useSharing({ tracks, setTracks, libraryLoaded, addToast, onSaved
   const createShare = useCallback(async (shareTracks: Track[], title: string, mode: ShareMode): Promise<string | null> => {
     const result = await seedShare(shareTracks, { title, mode });
     if (!result) {
-      addToast('Only local files can be shared', 'error');
+      addToast(tr('toastOnlyLocalShare'), 'error');
       return null;
     }
     seededRef.current.add(result.share.id);
@@ -116,7 +117,7 @@ export function useSharing({ tracks, setTracks, libraryLoaded, addToast, onSaved
     await stopSeeding(id);
     seededRef.current.delete(id);
     persistOutgoing(outgoing.filter(s => s.id !== id));
-    addToast('Stopped sharing');
+    addToast(tr('toastStoppedSharing'));
   }, [outgoing, addToast]);
 
   // --- Incoming shares ---
@@ -158,7 +159,7 @@ export function useSharing({ tracks, setTracks, libraryLoaded, addToast, onSaved
     if (incomingRef.current.has(infoHash)) return;
     // Our own share: nothing to receive
     if (outgoing.some(s => s.id === infoHash)) {
-      addToast('This is one of your own shares');
+      addToast(tr('toastOwnShare'));
       return;
     }
     setIncoming(prev => [...prev.filter(s => s.id !== infoHash), { id: infoHash, status: 'connecting' }]);
@@ -245,7 +246,7 @@ export function useSharing({ tracks, setTracks, libraryLoaded, addToast, onSaved
         savedIds.push(saved.id);
       } catch (err) {
         console.error('[Share] Save failed', err);
-        addToast(`Could not save "${share.tracks[index].name}"`, 'error');
+        addToast(tr('toastSaveTrackFailed', { name: share.tracks[index].name }), 'error');
       } finally {
         setSaving(prev => {
           const { [sourceId]: _, ...rest } = prev;
@@ -255,7 +256,7 @@ export function useSharing({ tracks, setTracks, libraryLoaded, addToast, onSaved
     }
 
     if (savedIds.length > 1 && !indexes) onSavedPlaylist(share.title, savedIds);
-    if (savedIds.length) addToast(`Saved ${savedIds.length} track${savedIds.length !== 1 ? 's' : ''} to your library`);
+    if (savedIds.length) addToast(tr('toastSavedTracks', { count: savedIds.length }));
   }, [setTracks, addToast, onSavedPlaylist]);
 
   return {

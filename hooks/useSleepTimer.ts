@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { tr } from '../utils/i18n';
 
 interface UseSleepTimerOptions {
   onTimerExpired: () => void;
@@ -15,12 +16,12 @@ export function useSleepTimer({ onTimerExpired, addToast }: UseSleepTimerOptions
     const ms = minutes * 60 * 1000;
     setEndTime(Date.now() + ms);
     setRemainingMs(ms);
-    addToast(`Sleep timer set for ${minutes} minutes`);
+    addToast(tr('toastSleepSet', { minutes }));
   }, [addToast]);
 
   const cancelSleepTimer = useCallback(() => {
     setEndTime(null);
-    addToast('Sleep timer cancelled');
+    addToast(tr('toastSleepCancelled'));
   }, [addToast]);
 
   useEffect(() => {
@@ -32,7 +33,7 @@ export function useSleepTimer({ onTimerExpired, addToast }: UseSleepTimerOptions
         setEndTime(null);
         setRemainingMs(0);
         onExpiredRef.current();
-        addToast('Sleep timer expired. Playback paused.');
+        addToast(tr('toastSleepExpired'));
       } else {
         setRemainingMs(remaining);
       }

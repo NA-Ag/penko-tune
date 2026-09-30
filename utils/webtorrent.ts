@@ -1,13 +1,8 @@
 import type { Instance, Torrent } from 'webtorrent';
 import { AUDIO_FILE_PATTERN } from './audio';
+import { getTrackers, getIceServers } from './network';
 
 let client: Instance | null = null;
-
-// Active public WebSocket trackers for WebRTC browser torrent discovery
-export const PUBLIC_WEBSOCKET_TRACKERS = [
-  'wss://tracker.webtorrent.dev',
-  'wss://tracker.openwebtorrent.com',
-];
 
 /**
  * Initialize WebTorrent client (singleton)
@@ -17,7 +12,11 @@ export const initWebTorrent = async (): Promise<Instance> => {
     const { default: WebTorrent } = await import('webtorrent');
     // Browsers can only reach WebRTC peers via websocket trackers; disable the Node-only
     // UDP/TCP discovery mechanisms (the DHT is aliased to a stub in vite.config.ts).
-    client = new WebTorrent({ dht: false, lsd: false, utp: false, natUpnp: false, natPmp: false }) as Instance;
+    const iceServers = getIceServers();
+    client = new WebTorrent({
+      dht: false, lsd: false, utp: false, natUpnp: false, natPmp: false,
+      ...(iceServers && { tracker: { rtcConfig: { iceServers } } }),
+    }) as Instance;
     console.log('[WebTorrent] Client initialized');
   }
   return client;
@@ -45,7 +44,7 @@ export const streamFromTorrent = async (
   const wtClient = await getWebTorrentClient();
 
   try {
-    const torrent = wtClient.add(magnetURI, { announce: PUBLIC_WEBSOCKET_TRACKERS }, async (torrent) => {
+    const torrent = wtClient.add(magnetURI, { announce: getTrackers() }, async (torrent) => {
       console.log('[WebTorrent] Torrent ready:', torrent.name, `(${torrent.files.length} files)`);
 
       const audioFile = torrent.files.find(file => AUDIO_FILE_PATTERN.test(file.name));
@@ -93,7 +92,7 @@ export const seedFile = async (file: File): Promise<string> => {
   const wtClient = await getWebTorrentClient();
 
   return new Promise((resolve, reject) => {
-    const torrent = wtClient.seed(file, { announce: PUBLIC_WEBSOCKET_TRACKERS }, (seeded) => {
+    const torrent = wtClient.seed(file, { announce: getTrackers() }, (seeded) => {
       console.log('[WebTorrent] Now seeding:', seeded.name);
       resolve(seeded.magnetURI);
     });

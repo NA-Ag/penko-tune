@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, Repeat, RotateCcw, RotateCw, FastForward, Bookmark, Music } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, Repeat, RotateCcw, RotateCw, FastForward, Bookmark, Music, Gauge, Repeat1, MicVocal } from 'lucide-react';
 import { PlayerState, ChapterMarker, Track } from '../types';
+import type { LoopRange } from '../hooks/useAudioPlayer';
 import { formatTime } from '../utils/formatters';
+import type { Translation } from '../translations';
 
 interface PlayerControlsProps {
   playerState: PlayerState;
@@ -21,8 +23,15 @@ interface PlayerControlsProps {
   onNextMarker?: () => void;
   onPrevMarker?: () => void;
   currentTrack: Track | null;
-  nothingPlayingLabel: string;
+  t: Translation;
+  speed: number;
+  onSpeedChange: (speed: number) => void;
+  loop: LoopRange | null;
+  onCycleLoop: () => void;
+  onShowLyrics?: () => void;
 }
+
+const SPEEDS = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2];
 
 const PlayerControls: React.FC<PlayerControlsProps> = ({
   playerState,
@@ -42,8 +51,75 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
   onNextMarker,
   onPrevMarker,
   currentTrack,
-  nothingPlayingLabel,
+  t,
+  speed,
+  onSpeedChange,
+  loop,
+  onCycleLoop,
+  onShowLyrics,
 }) => {
+  const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!speedMenuOpen) return;
+    const close = (e: MouseEvent) => !(e.target as Element).closest('[data-speed-menu]') && setSpeedMenuOpen(false);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [speedMenuOpen]);
+
+  const pct = (time: number) => `${(time / (playerState.duration || 1)) * 100}%`;
+  const loopLabel = !loop ? 'A-B' : loop.b === null ? 'A-…' : 'A-B';
+  const loopTitle = !loop ? t.loopSetA : loop.b === null ? t.loopSetB : t.loopClear;
+
+  const practiceButtons = (compact: boolean) => (
+    <>
+      <div className="relative" data-speed-menu>
+        <button
+          onClick={() => setSpeedMenuOpen(o => !o)}
+          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-mono transition-colors ${speed !== 1 ? 'text-cyan-400 bg-cyan-500/10' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+          title={t.speedTitle}
+          data-speed-button
+        >
+          {!compact && <Gauge size={14} />}
+          {speed}x
+        </button>
+        {speedMenuOpen && (
+          <div className={`absolute bottom-full mb-2 ${compact ? 'left-0' : 'right-0'} bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl p-1 z-50 min-w-[96px]`}>
+            <p className="px-2 py-1 text-[10px] text-zinc-500 uppercase tracking-wider">{t.speedTitle}</p>
+            {SPEEDS.map(s => (
+              <button
+                key={s}
+                onClick={() => { onSpeedChange(s); setSpeedMenuOpen(false); }}
+                className={`w-full text-left px-2 py-1 rounded text-sm font-mono ${s === speed ? 'bg-zinc-800 text-cyan-400' : 'text-zinc-300 hover:bg-zinc-800'}`}
+              >
+                {s}x
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <button
+        onClick={onCycleLoop}
+        disabled={!hasTrack}
+        className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-mono transition-colors disabled:opacity-40 ${loop ? 'text-amber-400 bg-amber-500/10' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'}`}
+        title={loopTitle}
+        data-loop-button
+      >
+        {!compact && <Repeat1 size={14} />}
+        {loopLabel}
+      </button>
+      {onShowLyrics && (
+        <button
+          onClick={onShowLyrics}
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+          title={t.showLyrics}
+          data-lyrics-button
+        >
+          <MicVocal size={14} />
+          {compact && t.lyrics}
+        </button>
+      )}
+    </>
+  );
   const hasTrack = !!currentTrack;
   // While dragging, show the drag position instead of the playback position
   const [dragTime, setDragTime] = useState<number | null>(null);
@@ -80,6 +156,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
     <div className="w-full flex items-center gap-3 text-xs text-zinc-400 font-mono">
       <span className="w-10 text-right">{formatTime(shownTime)}</span>
       <div
+        data-seekbar
         className="relative flex-1 group h-4 flex items-center cursor-pointer touch-none"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -87,7 +164,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
         onPointerCancel={() => setDragTime(null)}
         onClick={(e) => (e.ctrlKey || e.metaKey) && handleAddMarker(e)}
         onContextMenu={handleAddMarker}
-        title={hasTrack ? "Click or drag to seek • Right-click to add marker" : ""}
+        title={hasTrack ? t.seekHint : ""}
       >
         <div className="absolute inset-0 bg-zinc-800 rounded-full h-1 my-auto overflow-hidden pointer-events-none">
             <div
@@ -99,6 +176,14 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
           <div
             className={`absolute w-3 h-3 bg-white rounded-full shadow pointer-events-none -translate-x-1/2 transition-opacity ${dragTime !== null ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
             style={{ left: `${(shownTime / (playerState.duration || 1)) * 100}%` }}
+          />
+        )}
+
+        {/* A-B loop region */}
+        {loop && (
+          <div
+            className="absolute h-2 my-auto inset-y-0 bg-amber-400/40 border-x-2 border-amber-400 rounded-sm pointer-events-none"
+            style={{ left: pct(loop.a), width: loop.b !== null ? `calc(${pct(loop.b)} - ${pct(loop.a)})` : '0px' }}
           />
         )}
 
@@ -139,8 +224,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
           )}
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-medium text-white truncate">{currentTrack?.name ?? nothingPlayingLabel}</p>
-          {currentTrack && <p className="text-xs text-zinc-400 truncate">{currentTrack.artist || 'Unknown Artist'}</p>}
+          <p className="text-sm font-medium text-white truncate">{currentTrack?.name ?? t.nothingPlaying}</p>
+          {currentTrack && <p className="text-xs text-zinc-400 truncate">{currentTrack.artist || t.unknownArtist}</p>}
         </div>
         {playerState.playbackRate !== 1 && (
           <div className="flex items-center gap-1 px-2 py-0.5 bg-cyan-500/10 text-cyan-400 rounded-full text-xs font-bold animate-pulse shrink-0">
@@ -162,19 +247,20 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
             </p>
           )}
           {renderSeekBar()}
+          <div className="flex justify-center gap-2 pt-1">{practiceButtons(true)}</div>
         </div>
 
         <div className="flex items-center justify-between md:justify-center w-full md:w-auto gap-2 md:gap-4">
           <button 
             onClick={onToggleShuffle}
             className={`transition-colors p-2 rounded-full hover:bg-zinc-800 ${playerState.isShuffle ? 'text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-            title="Shuffle (s)"
+            title={t.ctlShuffle}
           >
             <Shuffle size={18} />
           </button>
           
           <div className="flex items-center gap-1 md:gap-4">
-            <button onClick={onPrev} className="text-zinc-300 hover:text-white transition-colors p-2 hover:bg-zinc-800 rounded-full" title="Previous Track">
+            <button onClick={onPrev} className="text-zinc-300 hover:text-white transition-colors p-2 hover:bg-zinc-800 rounded-full" title={t.ctlPrevious}>
               <SkipBack size={20} fill="currentColor" />
             </button>
 
@@ -182,21 +268,22 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
               <button
                 onClick={onPrevMarker}
                 className="text-yellow-500 hover:text-yellow-400 transition-colors p-2 hover:bg-zinc-800 rounded-full"
-                title="Previous Marker"
+                title={t.ctlPrevMarker}
               >
                 <Bookmark size={16} className="rotate-180" />
               </button>
             )}
 
-            <button onClick={onSkipBackward} className="hidden sm:block text-zinc-400 hover:text-white transition-colors p-2 hover:bg-zinc-800 rounded-full" title="-10s (Left Arrow)">
+            <button onClick={onSkipBackward} className="hidden sm:block text-zinc-400 hover:text-white transition-colors p-2 hover:bg-zinc-800 rounded-full" title={t.ctlBack10}>
               <RotateCcw size={18} />
             </button>
           </div>
           
           <button 
             onClick={onPlayPause}
+            data-play-toggle
             className="w-12 h-12 md:w-14 md:h-14 bg-white rounded-full flex items-center justify-center text-black hover:scale-105 transition-transform shadow-lg shadow-white/10"
-            title="Play/Pause (Space)"
+            title={t.ctlPlayPause}
           >
             {playerState.isPlaying ? (
               <Pause size={24} fill="currentColor" className="md:w-7 md:h-7" />
@@ -206,7 +293,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
           </button>
 
           <div className="flex items-center gap-1 md:gap-4">
-            <button onClick={onSkipForward} className="hidden sm:block text-zinc-400 hover:text-white transition-colors p-2 hover:bg-zinc-800 rounded-full" title="+10s (Right Arrow)">
+            <button onClick={onSkipForward} className="hidden sm:block text-zinc-400 hover:text-white transition-colors p-2 hover:bg-zinc-800 rounded-full" title={t.ctlForward10}>
               <RotateCw size={18} />
             </button>
 
@@ -214,13 +301,13 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
               <button
                 onClick={onNextMarker}
                 className="text-yellow-500 hover:text-yellow-400 transition-colors p-2 hover:bg-zinc-800 rounded-full"
-                title="Next Marker"
+                title={t.ctlNextMarker}
               >
                 <Bookmark size={16} />
               </button>
             )}
 
-            <button onClick={onNext} className="text-zinc-300 hover:text-white transition-colors p-2 hover:bg-zinc-800 rounded-full" title="Next Track">
+            <button onClick={onNext} className="text-zinc-300 hover:text-white transition-colors p-2 hover:bg-zinc-800 rounded-full" title={t.ctlNext}>
               <SkipForward size={20} fill="currentColor" />
             </button>
           </div>
@@ -228,7 +315,7 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
           <button 
             onClick={onToggleRepeat}
             className={`transition-colors relative p-2 rounded-full hover:bg-zinc-800 ${playerState.repeatMode !== 'off' ? 'text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-            title="Repeat (r)"
+            title={t.ctlRepeat}
           >
             <Repeat size={18} />
             {playerState.repeatMode === 'one' && (
@@ -245,7 +332,8 @@ const PlayerControls: React.FC<PlayerControlsProps> = ({
 
       {/* Volume Controls (Right) - Desktop Only */}
       <div className="w-1/4 hidden md:flex justify-end items-center gap-2">
-        <button onClick={onToggleMute} className="text-zinc-400 hover:text-zinc-200 p-2 rounded-full hover:bg-zinc-800">
+        {practiceButtons(false)}
+        <button onClick={onToggleMute} className="text-zinc-400 hover:text-zinc-200 p-2 rounded-full hover:bg-zinc-800" title={t.mute}>
           {playerState.isMuted || playerState.volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
         </button>
         <div className="w-24 relative group h-4 flex items-center">

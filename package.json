@@ -17,9 +17,11 @@
     "preview": "vite preview",
     "generate-icons": "node generate-icons.js",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "npm run build && electron-builder"
+    "electron:build": "npm run build && electron-builder",
+    "test:e2e": "node tests/run.mjs"
   },
   "dependencies": {
+    "@trystero-p2p/nostr": "^0.25.4",
     "@trystero-p2p/torrent": "^0.25.4",
     "d3": "^7.9.0",
     "fflate": "^0.8.3",
@@ -42,6 +44,7 @@
     "events": "^3.3.0",
     "os-browserify": "^0.3.0",
     "path-browserify": "^1.0.1",
+    "playwright": "^1.63.0",
     "process": "^0.11.10",
     "sharp": "^0.33.5",
     "stream-browserify": "^3.0.0",

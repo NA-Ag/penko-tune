@@ -134,7 +134,6 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, isPlaying, mode }) =>
         // Spiral effect: size grows over time, then resets
         // This creates the "uncurling" effect
         const spiralPhase = (time * 20) % 100; // 0-100 cycle
-        const spiralScale = spiralPhase / 100; // 0 to 1
 
         // Create all petals
         const allPetals = [];

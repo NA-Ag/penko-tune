@@ -18,6 +18,11 @@ export interface Preferences {
   lastTrackId: string | null;
   lastPosition: number;
   dismissedWarnings: Record<string, number>; // warning id -> when it was dismissed
+  crossfade: number; // seconds between tracks; 0 = gapless
+  normalize: boolean; // apply ReplayGain from tags
+  customTrackers: string[]; // extra/replacement WebSocket trackers (e.g. a school's own)
+  onlyCustomTrackers: boolean; // use only customTrackers (no public ones)
+  customIceServers: string; // optional STUN/TURN servers, one URL per line
 }
 
 const KEY = 'penko-preferences';
@@ -39,6 +44,11 @@ const defaults = (): Preferences => ({
   lastTrackId: null,
   lastPosition: 0,
   dismissedWarnings: {},
+  crossfade: 0,
+  normalize: true,
+  customTrackers: [],
+  onlyCustomTrackers: false,
+  customIceServers: '',
 });
 
 let cache: Preferences | null = null;

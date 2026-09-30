@@ -30,9 +30,5 @@ export const languageNames: Record<Language, string> = {
   zh: '中文',
 };
 
-const locales: Record<Language, Partial<Translation>> = { en, es, pt, fr, de, it, ru, uk, ja, ko, zh };
-
-// Safety net: any key a locale lacks falls back to English
-export const translations = Object.fromEntries(
-  Object.entries(locales).map(([lang, strings]) => [lang, { ...en, ...strings }])
-) as Record<Language, Translation>;
+// Each locale is typed `Translation`, so the compiler rejects any missing string.
+export const translations: Record<Language, Translation> = { en, es, pt, fr, de, it, ru, uk, ja, ko, zh };

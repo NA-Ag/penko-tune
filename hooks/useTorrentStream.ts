@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Track } from '../types';
 import { streamFromTorrent, removeTorrent } from '../utils/webtorrent';
+import { tr } from '../utils/i18n';
 
 interface UseTorrentStreamProps {
   setTracks: React.Dispatch<React.SetStateAction<Track[]>>;
@@ -26,7 +27,7 @@ export function useTorrentStream({ setTracks, startTrack, addToast }: UseTorrent
   const playFromTorrent = useCallback(async (track: Track) => {
     const magnet = getMagnet(track);
     if (!magnet) {
-      addToast('Could not resolve this track', 'error');
+      addToast(tr('toastResolveFailed'), 'error');
       return;
     }
 
@@ -36,7 +37,7 @@ export function useTorrentStream({ setTracks, startTrack, addToast }: UseTorrent
     currentMagnetRef.current = magnet;
 
     setIsResolving(true);
-    addToast('Resolving P2P stream from peers...');
+    addToast(tr('toastResolvingPeers'));
 
     let settled = false;
     const fail = (err: unknown) => {
@@ -45,7 +46,7 @@ export function useTorrentStream({ setTracks, startTrack, addToast }: UseTorrent
       clearTimeout(timeout);
       setIsResolving(false);
       console.error(err);
-      addToast('Could not reach any peers for this track', 'error');
+      addToast(tr('toastNoPeers'), 'error');
     };
     // A torrent with no reachable peers never errors, it just waits forever
     const timeout = setTimeout(() => {
@@ -68,7 +69,7 @@ export function useTorrentStream({ setTracks, startTrack, addToast }: UseTorrent
             : [...prev, playableTrack]
         );
         startTrack(playableTrack);
-        addToast('Downloaded from peers');
+        addToast(tr('toastDownloadedFromPeers'));
       },
       undefined,
       fail

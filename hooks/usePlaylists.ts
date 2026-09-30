@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Playlist } from '../types';
 import { savePlaylists, loadPlaylists } from '../utils/persistence';
 import { generateId, readFileAsDataURL } from '../utils/audio';
+import { tr } from '../utils/i18n';
 
 interface UsePlaylistsOptions {
   addToast: (message: string, type?: 'info' | 'error') => void;
@@ -35,7 +36,7 @@ export function usePlaylists({ addToast }: UsePlaylistsOptions) {
     setPlaylists(prev => [...prev, { id: generateId(), name: trimmed, trackIds: [], createdAt: Date.now() }]);
     setNewPlaylistName('');
     setShowCreatePlaylist(false);
-    addToast(`Playlist "${trimmed}" created`);
+    addToast(tr('toastPlaylistCreated', { name: trimmed }));
   }, [addToast]);
 
   /** Create a playlist that already contains tracks (e.g. a saved shared playlist). */
@@ -47,7 +48,7 @@ export function usePlaylists({ addToast }: UsePlaylistsOptions) {
     const playlist = playlists.find(p => p.id === id);
     setPlaylists(prev => prev.filter(p => p.id !== id));
     setSelectedPlaylist(prev => (prev === id ? null : prev));
-    addToast(`Playlist "${playlist?.name ?? 'Item'}" deleted`);
+    addToast(tr('toastPlaylistDeleted', { name: playlist?.name ?? '' }));
   }, [playlists, addToast]);
 
   const addTrackToPlaylist = useCallback((trackId: string, playlistId: string) => {
@@ -56,14 +57,14 @@ export function usePlaylists({ addToast }: UsePlaylistsOptions) {
         ? { ...p, trackIds: [...p.trackIds, trackId] }
         : p
     ));
-    addToast('Track added to playlist');
+    addToast(tr('toastAddedToPlaylist'));
   }, [addToast]);
 
   const removeTrackFromPlaylist = useCallback((trackId: string, playlistId: string) => {
     setPlaylists(prev => prev.map(p =>
       p.id === playlistId ? { ...p, trackIds: p.trackIds.filter(id => id !== trackId) } : p
     ));
-    addToast('Track removed from playlist');
+    addToast(tr('toastRemovedFromPlaylist'));
   }, [addToast]);
 
   /** Drop a deleted track from every playlist. */
@@ -79,9 +80,9 @@ export function usePlaylists({ addToast }: UsePlaylistsOptions) {
     try {
       const coverArtUrl = await readFileAsDataURL(imageFile);
       setPlaylists(prev => prev.map(p => (p.id === playlistId ? { ...p, coverArtUrl } : p)));
-      addToast('Playlist cover updated');
+      addToast(tr('toastPlaylistCoverUpdated'));
     } catch {
-      addToast('Failed to read image', 'error');
+      addToast(tr('toastImageFailed'), 'error');
     }
   }, [addToast]);
 

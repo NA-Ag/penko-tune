@@ -3,6 +3,7 @@ import type { Track, LinkedFolder } from '../types';
 import { loadFolders, saveFolders } from '../utils/persistence';
 import { pickMusicFolder, walkAudioFiles, hasFolderPermission, requestFolderPermission } from '../utils/folders';
 import { generateId } from '../utils/audio';
+import { tr } from '../utils/i18n';
 
 interface UseLinkedFoldersProps {
   tracks: Track[];
@@ -25,10 +26,11 @@ export function useLinkedFolders({ tracks, setTracks, libraryLoaded, addToast }:
   const syncFolder = useCallback(async (folder: LinkedFolder) => {
     setScanningIds(prev => [...prev, folder.id]);
     try {
-      const found = new Map<string, { handle: FileSystemFileHandle; file: File }>();
-      for await (const { handle, relativePath } of walkAudioFiles(folder.handle)) {
+      const found = new Map<string, { handle: FileSystemFileHandle; file: File; lyrics?: string }>();
+      for await (const { handle, relativePath, lyricsHandle } of walkAudioFiles(folder.handle)) {
         try {
-          found.set(relativePath, { handle, file: await handle.getFile() });
+          const lyrics = lyricsHandle ? await (await lyricsHandle.getFile()).text().catch(() => undefined) : undefined;
+          found.set(relativePath, { handle, file: await handle.getFile(), lyrics });
         } catch {
           // unreadable file (e.g. removed mid-scan)
         }
@@ -39,16 +41,15 @@ export function useLinkedFolders({ tracks, setTracks, libraryLoaded, addToast }:
       );
       const refreshed = new Map<string, Track>(); // by track id
       const added: Track[] = [];
-      for (const [relativePath, { handle, file }] of found) {
+      for (const [relativePath, { handle, file, lyrics }] of found) {
         const existing = known.get(relativePath);
         const url = URL.createObjectURL(file); // references the file on disk; nothing is copied
         if (existing) {
-          refreshed.set(existing.id, { ...existing, file, url, fileHandle: handle });
+          refreshed.set(existing.id, { ...existing, file, url, fileHandle: handle, lyrics: existing.lyrics ?? lyrics });
         } else {
           added.push({
             id: generateId(),
             name: file.name.replace(/\.[^/.]+$/, ''),
-            artist: 'Local File',
             type: 'local',
             file,
             url,
@@ -57,6 +58,7 @@ export function useLinkedFolders({ tracks, setTracks, libraryLoaded, addToast }:
             relativePath,
             addedAt: Date.now(),
             tagsRead: false,
+            lyrics,
           });
         }
       }
@@ -108,20 +110,20 @@ export function useLinkedFolders({ tracks, setTracks, libraryLoaded, addToast }:
     try {
       handle = await pickMusicFolder();
     } catch (err) {
-      if ((err as DOMException)?.name !== 'AbortError') addToast('Could not open that folder', 'error');
+      if ((err as DOMException)?.name !== 'AbortError') addToast(tr('toastFolderOpenFailed'), 'error');
       return;
     }
     for (const folder of folders) {
       if (await folder.handle.isSameEntry(handle)) {
-        addToast(`"${handle.name}" is already linked`);
+        addToast(tr('toastFolderAlreadyLinked', { name: handle.name }));
         return;
       }
     }
     const folder: LinkedFolder = { id: generateId(), name: handle.name, handle, addedAt: Date.now() };
     persist([...folders, folder]);
-    addToast(`Scanning "${folder.name}"...`);
+    addToast(tr('toastScanning', { name: folder.name }));
     const { added } = await syncFolder(folder);
-    addToast(`Linked "${folder.name}": ${added} track${added !== 1 ? 's' : ''}`);
+    addToast(tr('toastFolderLinked', { name: folder.name, count: added }));
   }, [folders, syncFolder, addToast]);
 
   /** Ask for access to every disconnected folder (call from a click). */
@@ -133,7 +135,7 @@ export function useLinkedFolders({ tracks, setTracks, libraryLoaded, addToast }:
         connected++;
       }
     }
-    if (connected) addToast(`Reconnected ${connected} folder${connected !== 1 ? 's' : ''}`);
+    if (connected) addToast(tr('toastFoldersReconnected', { count: connected }));
     return connected > 0;
   }, [folders, disconnectedIds, syncFolder, addToast]);
 
@@ -142,7 +144,7 @@ export function useLinkedFolders({ tracks, setTracks, libraryLoaded, addToast }:
     if (!folder) return;
     if (!(await hasFolderPermission(folder.handle)) && !(await requestFolderPermission(folder.handle))) return;
     const { added, removed } = await syncFolder(folder);
-    addToast(`"${folder.name}": ${added} added, ${removed} removed`);
+    addToast(tr('toastRescanned', { name: folder.name, added, removed }));
   }, [folders, syncFolder, addToast]);
 
   /** Stop tracking a folder. Its files on disk are untouched. */
@@ -155,7 +157,7 @@ export function useLinkedFolders({ tracks, setTracks, libraryLoaded, addToast }:
     }));
     persist(folders.filter(f => f.id !== id));
     setDisconnectedIds(prev => prev.filter(x => x !== id));
-    if (folder) addToast(`Unlinked "${folder.name}" (files on disk are untouched)`);
+    if (folder) addToast(tr('toastUnlinked', { name: folder.name }));
   }, [folders, setTracks, addToast]);
 
   return {

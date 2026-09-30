@@ -4,7 +4,28 @@ import type { Track } from '../types';
 const COVER_SIZE = 400; // px; embedded art is often 1000px+, which bloats IndexedDB
 const PARSE_CONCURRENCY = 4;
 
-export type TrackTags = Pick<Track, 'name' | 'artist' | 'album' | 'duration' | 'trackNumber' | 'discNumber' | 'year' | 'genre' | 'coverArtUrl'>;
+export type TrackTags = Pick<Track, 'name' | 'artist' | 'album' | 'duration' | 'trackNumber' | 'discNumber' | 'year' | 'genre' | 'coverArtUrl' | 'gainDb' | 'lyrics'>;
+
+/**
+ * Embedded lyrics come as plain strings (older parsers, USLT/Vorbis LYRICS) or as objects
+ * with synced lines. Normalize both to text; synced lines become LRC.
+ */
+const lyricsFromTags = (raw: unknown): string | undefined => {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const first = raw[0] as any;
+  if (typeof first === 'string') return first.trim() || undefined;
+  if (Array.isArray(first?.syncText) && first.syncText.length) {
+    return first.syncText
+      .map((line: { text: string; timestamp?: number }) => {
+        const ms = line.timestamp ?? 0;
+        const m = Math.floor(ms / 60000);
+        const s = ((ms % 60000) / 1000).toFixed(2).padStart(5, '0');
+        return `[${String(m).padStart(2, '0')}:${s}]${line.text}`;
+      })
+      .join('\n');
+  }
+  return typeof first?.text === 'string' && first.text.trim() ? first.text.trim() : undefined;
+};
 
 /** Downscale an embedded picture to a compact JPEG data URL. */
 const pictureToDataURL = async (data: Uint8Array, format: string): Promise<string | undefined> => {
@@ -43,6 +64,9 @@ export const readTags = async (file: File, coverCache?: Map<string, string | und
     if (common.year) tags.year = common.year;
     if (common.genre?.[0]) tags.genre = common.genre[0];
     if (format.duration && isFinite(format.duration)) tags.duration = format.duration;
+    if (common.replaygain_track_gain?.dB != null) tags.gainDb = common.replaygain_track_gain.dB;
+    const lyrics = lyricsFromTags(common.lyrics as unknown);
+    if (lyrics) tags.lyrics = lyrics;
 
     const picture = selectCover(common.picture);
     if (picture) {

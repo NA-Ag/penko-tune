@@ -208,7 +208,7 @@ export const importLibraryZip = async (
       if (entry.name === MANIFEST) {
         manifest = JSON.parse(strFromU8(concat(chunks)));
         if (manifest?.format !== FORMAT) {
-          unzipError = new Error('This zip is not a Penko Tune library export');
+          unzipError = new Error('NOT_LIBRARY');
           return;
         }
         manifest.tracks.forEach(t => t.audioPath && trackByPath.set(t.audioPath, t));
@@ -239,7 +239,7 @@ export const importLibraryZip = async (
   }
   unzip.push(new Uint8Array(0), true);
   if (unzipError) throw unzipError;
-  if (!manifest) throw new Error('Missing library.json - not a Penko Tune library export');
+  if (!manifest) throw new Error('NOT_LIBRARY'); // no library.json
   await Promise.all(pendingWrites);
 
   const m = manifest as LibraryManifest;

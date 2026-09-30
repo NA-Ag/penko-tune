@@ -3,6 +3,7 @@ import { Users, Copy, Check, Loader2, Music, Radio, Info, Volume2 } from 'lucide
 import type { RoomState } from '../hooks/useListenTogether';
 import type { Translation } from '../translations';
 import { Modal, primaryButton, secondaryButton } from './Modal';
+import { format } from '../utils/i18n';
 
 interface ListenTogetherDialogProps {
   t: Translation;
@@ -59,7 +60,7 @@ export const ListenTogetherDialog: React.FC<ListenTogetherDialogProps> = ({
         </div>
         <p className="text-sm text-zinc-400 flex items-center gap-2">
           <Users size={16} className="text-cyan-400" />
-          {room.listeners} {t.listenListeners}
+          {format(t.listenListeners, { count: room.listeners })}
         </p>
         <button onClick={onLeave} className={`${secondaryButton} w-full`}>{t.listenEnd}</button>
       </>

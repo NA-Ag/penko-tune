@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Track } from '../types';
 import { generateId } from '../utils/audio';
+import { tr } from '../utils/i18n';
 
 interface UseNetworkStreamProps {
   setTracks: React.Dispatch<React.SetStateAction<Track[]>>;
@@ -37,7 +38,7 @@ export function useNetworkStream({ setTracks, playTrack, addToast, onClose }: Us
 
     const isMagnet = url.startsWith('magnet:');
     if (!isMagnet && !/^https?:\/\//i.test(url)) {
-      addToast('Enter an http(s) audio URL or a magnet link', 'error');
+      addToast(tr('toastInvalidStreamUrl'), 'error');
       return;
     }
 

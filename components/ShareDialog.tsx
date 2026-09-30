@@ -3,6 +3,7 @@ import { Share2, Copy, Check, Loader2, Radio, Download, Info } from 'lucide-reac
 import type { ShareMode } from '../types';
 import type { Translation } from '../translations';
 import { Modal, primaryButton, secondaryButton } from './Modal';
+import { format } from '../utils/i18n';
 
 interface ShareDialogProps {
   t: Translation;
@@ -54,7 +55,7 @@ export const ShareDialog: React.FC<ShareDialogProps> = ({ t, title, trackCount, 
     <Modal title={t.shareTitle} icon={<Share2 size={20} className="text-cyan-500" />} onClose={onClose} closeLabel={t.close}>
       <p className="text-sm text-zinc-300">
         <span className="font-medium text-white">{title}</span>
-        {trackCount > 1 && <span className="text-zinc-500"> · {trackCount} {t.tracksInLibrary}</span>}
+        {trackCount > 1 && <span className="text-zinc-500"> · {format(t.tracksCount, { count: trackCount })}</span>}
       </p>
 
       {!link ? (

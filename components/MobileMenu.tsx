@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Compass, ChevronDown, Plus, HardDrive, Users, Sliders, Mic, Timer, Globe, Layout, List, Activity, Languages } from 'lucide-react';
+import { X, Compass, ChevronDown, Plus, HardDrive, Users, Settings as SettingsIcon, Disc3, Mic2, Layout as LayoutIcon, Sliders, Mic, Timer, Globe, Layout, List, Activity, Languages } from 'lucide-react';
 import { PlayerState, ViewMode, VisualizerMode } from '../types';
 import { Language, Translation, languageNames } from '../translations';
 import { VISUALIZER_OPTIONS } from './visualizerOptions';
@@ -17,6 +17,8 @@ interface MobileMenuProps {
   onShowSleepTimer: () => void;
   onShowNetworkStream: () => void;
   onShowStorage: () => void;
+  onShowSettings: () => void;
+  onShowView: (view: string | null) => void;
   onShowListen: () => void;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
@@ -39,6 +41,8 @@ export function MobileMenu({
   onShowSleepTimer,
   onShowNetworkStream,
   onShowStorage,
+  onShowSettings,
+  onShowView,
   onShowListen,
   viewMode,
   setViewMode,
@@ -52,7 +56,7 @@ export function MobileMenu({
   return (
     <div className="fixed inset-0 z-50 bg-zinc-950/95 backdrop-blur-xl flex flex-col animate-in slide-in-from-right duration-200">
       <div className="flex items-center justify-between p-6 border-b border-zinc-800">
-        <h2 className="text-xl font-bold text-white">Menu</h2>
+        <h2 className="text-xl font-bold text-white">{t.menu}</h2>
         <button 
           onClick={onClose}
           className="p-2 text-zinc-400 hover:text-white"
@@ -74,12 +78,24 @@ export function MobileMenu({
           
           {expandedSection === 'navigation' && (
             <div className="p-4 grid grid-cols-1 gap-3 bg-zinc-900/30">
+              <div className="grid grid-cols-3 gap-2">
+                {([[null, LayoutIcon, t.allTracks], ['albums', Disc3, t.albums], ['artists', Mic2, t.artists]] as const).map(([view, Icon, label]) => (
+                  <button
+                    key={label}
+                    onClick={() => { onShowView(view); onClose(); }}
+                    className="flex flex-col items-center gap-1 p-3 bg-zinc-900 rounded-xl border border-zinc-800 active:bg-zinc-800 text-zinc-300"
+                  >
+                    <Icon size={20} className="text-cyan-400" />
+                    <span className="text-xs">{label}</span>
+                  </button>
+                ))}
+              </div>
               <label className="w-full flex items-center gap-3 p-4 bg-zinc-900 rounded-xl active:bg-zinc-800 border border-zinc-800 cursor-pointer">
                 <Plus size={24} className="text-cyan-400" />
                 <span className="font-medium text-white">{t.addFiles}</span>
                 <input
                   type="file"
-                  accept="audio/*,image/*,.flac,.ogg,.m4a,.aac"
+                  accept="audio/*,image/*,.flac,.ogg,.m4a,.aac,.lrc"
                   multiple
                   onChange={(e) => { onFileUpload(e); onClose(); }}
                   className="hidden"
@@ -92,6 +108,10 @@ export function MobileMenu({
               <button onClick={() => { onShowStorage(); onClose(); }} className="w-full flex items-center gap-3 p-4 bg-zinc-900 rounded-xl active:bg-zinc-800 border border-zinc-800">
                 <HardDrive size={24} className="text-cyan-400" />
                 <span className="font-medium text-white">{t.storageTitle}</span>
+              </button>
+              <button onClick={() => { onShowSettings(); onClose(); }} className="w-full flex items-center gap-3 p-4 bg-zinc-900 rounded-xl active:bg-zinc-800 border border-zinc-800">
+                <SettingsIcon size={24} className="text-cyan-400" />
+                <span className="font-medium text-white">{t.settings}</span>
               </button>
             </div>
           )}

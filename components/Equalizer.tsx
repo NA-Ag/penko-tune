@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { EQBand } from '../types';
 import { X, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { getBuiltInPresets, saveEQPreset, loadEQPresets, deleteEQPreset } from '../utils/persistence';
+import type { Translation } from '../translations';
 
 interface EqualizerProps {
   bands: EQBand[];
@@ -9,9 +10,20 @@ interface EqualizerProps {
   onReset: () => void;
   onClose: () => void;
   onLoadPreset: (bands: EQBand[]) => void;
+  t: Translation;
 }
 
-const Equalizer: React.FC<EqualizerProps> = ({ bands, onBandChange, onReset, onClose, onLoadPreset }) => {
+// Built-in presets are stored by English name; show them translated
+const BUILT_IN_PRESET_LABELS: Record<string, keyof Translation> = {
+  'Flat': 'eqPresetFlat',
+  'Bass Boost': 'eqPresetBassBoost',
+  'Treble Boost': 'eqPresetTrebleBoost',
+  'Vocal Boost': 'eqPresetVocalBoost',
+  'Classical': 'eqPresetClassical',
+  'Rock': 'eqPresetRock',
+};
+
+const Equalizer: React.FC<EqualizerProps> = ({ bands, onBandChange, onReset, onClose, onLoadPreset, t }) => {
   const [userPresets, setUserPresets] = useState(loadEQPresets());
   const [newPresetName, setNewPresetName] = useState('');
   const [showSaveInput, setShowSaveInput] = useState(false);
@@ -49,14 +61,14 @@ const Equalizer: React.FC<EqualizerProps> = ({ bands, onBandChange, onReset, onC
       <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-xl shadow-2xl w-full max-w-2xl mx-4">
         <div className="flex items-center justify-between mb-4">
             <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                Equalizer
-                <span className="text-xs font-normal text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">10-Band</span>
+                {t.eqTitle}
+                <span className="text-xs font-normal text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">{t.eqBands}</span>
             </h3>
             <div className="flex items-center gap-2">
                 <button
                     onClick={onReset}
                     className="p-2 text-zinc-400 hover:text-white transition-colors rounded-full hover:bg-zinc-800"
-                    title="Reset Flat"
+                    title={t.eqResetFlat}
                 >
                     <RotateCcw size={18} />
                 </button>
@@ -72,21 +84,21 @@ const Equalizer: React.FC<EqualizerProps> = ({ bands, onBandChange, onReset, onC
         {/* Presets */}
         <div className="mb-4 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-zinc-500">Built-in:</span>
+            <span className="text-xs text-zinc-500">{t.eqBuiltIn}</span>
             {Object.entries(builtInPresets).map(([name, presetBands]) => (
               <button
                 key={name}
                 onClick={() => onLoadPreset(presetBands as EQBand[])}
                 className="text-xs px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition-colors"
               >
-                {name}
+                {t[BUILT_IN_PRESET_LABELS[name]] ?? name}
               </button>
             ))}
           </div>
 
           {Object.keys(userPresets).length > 0 && (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-zinc-500">Custom:</span>
+              <span className="text-xs text-zinc-500">{t.eqCustom}</span>
               {Object.entries(userPresets).map(([name, presetBands]) => (
                 <div key={name} className="flex items-center gap-1">
                   <button
@@ -98,7 +110,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ bands, onBandChange, onReset, onC
                   <button
                     onClick={() => handleDeletePreset(name)}
                     className="text-xs px-1.5 py-1 bg-red-900/30 hover:bg-red-800/40 text-red-300 rounded-r-md transition-colors"
-                    title="Delete preset"
+                    title={t.eqDeletePreset}
                   >
                     <Trash2 size={12} />
                   </button>
@@ -114,7 +126,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ bands, onBandChange, onReset, onC
                 className="text-xs px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition-colors flex items-center gap-1"
               >
                 <Save size={12} />
-                Save Current as Preset
+                {t.eqSaveCurrent}
               </button>
             ) : (
               <div className="flex items-center gap-2">
@@ -123,7 +135,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ bands, onBandChange, onReset, onC
                   value={newPresetName}
                   onChange={(e) => setNewPresetName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSavePreset()}
-                  placeholder="Preset name..."
+                  placeholder={t.eqPresetName}
                   className="text-xs px-2 py-1 bg-zinc-800 text-white border border-zinc-700 rounded-md focus:outline-none focus:border-cyan-500"
                   autoFocus
                 />
@@ -131,13 +143,13 @@ const Equalizer: React.FC<EqualizerProps> = ({ bands, onBandChange, onReset, onC
                   onClick={handleSavePreset}
                   className="text-xs px-2 py-1 bg-cyan-700 hover:bg-cyan-600 text-white rounded-md transition-colors"
                 >
-                  Save
+                  {t.save}
                 </button>
                 <button
                   onClick={() => { setShowSaveInput(false); setNewPresetName(''); }}
                   className="text-xs px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition-colors"
                 >
-                  Cancel
+                  {t.cancel}
                 </button>
               </div>
             )}

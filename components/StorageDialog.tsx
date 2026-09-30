@@ -5,6 +5,7 @@ import type { StorageStatus } from '../utils/storage';
 import type { Translation } from '../translations';
 import { formatBytes } from '../utils/formatters';
 import { Modal, primaryButton, secondaryButton } from './Modal';
+import { format } from '../utils/i18n';
 
 interface StorageDialogProps {
   t: Translation;
@@ -70,8 +71,8 @@ export const StorageDialog: React.FC<StorageDialogProps> = ({
               <div className={`h-full ${usagePct > 80 ? 'bg-amber-500' : 'bg-cyan-500'}`} style={{ width: `${Math.max(usagePct, 1)}%` }} />
             </div>
             <p className="text-xs text-zinc-500 flex justify-between">
-              <span>{formatBytes(status.usage, 1)} {t.storageUsedOf} {formatBytes(status.quota, 0)}</span>
-              <span>{trackCount} {t.tracksInLibrary} · {formatBytes(copiedBytes, 1)} {t.storageCopied}</span>
+              <span>{format(t.storageUsedOf, { used: formatBytes(status.usage, 1), total: formatBytes(status.quota, 0) })}</span>
+              <span>{format(t.tracksInLibrary, { count: trackCount })} · {format(t.storageCopied, { size: formatBytes(copiedBytes, 1) })}</span>
             </p>
           </div>
         )}

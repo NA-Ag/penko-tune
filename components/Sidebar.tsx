@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layout, FolderOpen, Plus, Image as ImageIcon, X, Link2, Share2, Users, Copy, HardDrive, Loader2, AlertTriangle } from 'lucide-react';
+import { Layout, FolderOpen, Plus, Disc3, Mic2, Image as ImageIcon, X, Repeat1, Link2, Share2, Users, Copy, HardDrive, Loader2, AlertTriangle } from 'lucide-react';
 import type { OutgoingShare } from '../types';
 import type { IncomingState } from '../hooks/useSharing';
 import type { StorageStatus } from '../utils/storage';
@@ -7,6 +7,7 @@ import { formatBytes } from '../utils/formatters';
 import { ViewMode, Playlist, Track, ChapterMarker } from '../types';
 import type { Translation } from '../translations';
 import { formatTime } from '../utils/formatters';
+import { format } from '../utils/i18n';
 
 interface SidebarProps {
   t: Translation;
@@ -36,6 +37,7 @@ interface SidebarProps {
   onSetEditingMarkerLabel: (label: string) => void;
   onJumpToMarker: (timestamp: number) => void;
   onDeleteMarker: (id: string) => void;
+  onLoopMarker: (timestamp: number) => void;
   canLinkFolders: boolean;
   onLinkFolder: () => void;
   onSharePlaylist: (id: string) => void;
@@ -78,6 +80,7 @@ export function Sidebar({
   onSetEditingMarkerLabel,
   onJumpToMarker,
   onDeleteMarker,
+  onLoopMarker,
   canLinkFolders,
   onLinkFolder,
   onSharePlaylist,
@@ -95,7 +98,7 @@ export function Sidebar({
   return (
     <aside className="w-64 bg-zinc-950 border-r border-zinc-900 hidden md:flex flex-col p-4 gap-6 z-10 overflow-y-auto">
       <div className="space-y-2">
-        <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2">Library</h3>
+        <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2">{t.library}</h3>
         <button
           onClick={() => {
             onSetSelectedPlaylist(null);
@@ -110,12 +113,25 @@ export function Sidebar({
             <Layout size={18} className={selectedPlaylist === null ? 'text-cyan-400' : 'text-zinc-500 group-hover:text-cyan-400'} />
             {t.allTracks}
         </button>
+        {([['albums', 'album:', Disc3, t.albums], ['artists', 'artist:', Mic2, t.artists]] as const).map(([view, prefix, Icon, label]) => {
+          const active = selectedPlaylist === view || !!selectedPlaylist?.startsWith(prefix);
+          return (
+            <button
+              key={view}
+              onClick={() => { onSetSelectedPlaylist(view); onSetViewMode(ViewMode.LIST); }}
+              className={`w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors text-left group ${active ? 'bg-zinc-900 text-cyan-400' : 'text-zinc-300 hover:bg-zinc-900'}`}
+            >
+              <Icon size={18} className={active ? 'text-cyan-400' : 'text-zinc-500 group-hover:text-cyan-400'} />
+              {label}
+            </button>
+          );
+        })}
          <label className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-900 rounded-md transition-colors cursor-pointer group">
             <Plus size={18} className="text-zinc-500 group-hover:text-cyan-400" />
             {t.addFiles}
             <input 
               type="file" 
-              accept="audio/*,image/*,.flac,.ogg,.m4a,.aac" 
+              accept="audio/*,image/*,.flac,.ogg,.m4a,.aac,.lrc" 
               multiple 
               onChange={onFileUpload} 
               className="hidden" 
@@ -364,9 +380,16 @@ export function Sidebar({
                 </button>
               )}
               <button
+                onClick={() => onLoopMarker(marker.timestamp)}
+                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-800 rounded text-zinc-600 hover:text-amber-400 transition-all"
+                title={t.loopMarkerSection}
+              >
+                <Repeat1 size={12} />
+              </button>
+              <button
                 onClick={() => onDeleteMarker(marker.id)}
                 className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-800 rounded text-zinc-600 hover:text-red-400 transition-all"
-                title="Delete Marker"
+                title={t.deleteMarker}
               >
                 <Plus size={12} className="rotate-45" />
               </button>
@@ -397,7 +420,7 @@ export function Sidebar({
                 <span className="flex-1 min-w-0 text-xs">
                   <span className="block truncate text-zinc-300">{share.title}</span>
                   <span className="block text-zinc-600">
-                    {share.mode === 'copy' ? t.shareModeCopy : t.shareModeStream} · {peerCounts[share.id] ?? 0} {t.peersConnected}
+                    {share.mode === 'copy' ? t.shareModeCopy : t.shareModeStream} · {format(t.peersConnected, { count: peerCounts[share.id] ?? 0 })}
                   </span>
                 </span>
                 <button onClick={() => onCopyShareLink(share)} className="p-1 text-zinc-600 hover:text-cyan-400" title={t.copy}>
@@ -430,11 +453,11 @@ export function Sidebar({
                 />
               </span>
               <span className="block text-[10px] text-zinc-600">
-                {tracksCount} {t.tracksInLibrary} · {formatBytes(storage.usage, 1)}
+                {format(t.tracksInLibrary, { count: tracksCount })} · {formatBytes(storage.usage, 1)}
               </span>
             </>
           ) : (
-            <span className="block text-[10px] text-zinc-600">{tracksCount} {t.tracksInLibrary}</span>
+            <span className="block text-[10px] text-zinc-600">{format(t.tracksInLibrary, { count: tracksCount })}</span>
           )}
         </button>
       </div>

@@ -15,6 +15,8 @@ export interface Track {
   genre?: string;
   addedAt?: number; // epoch ms
   tagsRead?: boolean; // embedded tags have been parsed (local files only)
+  gainDb?: number; // ReplayGain track gain from tags, used when normalization is on
+  lyrics?: string; // plain text or LRC (timestamped) lyrics
 
   // Linked tracks: the audio stays in a folder on the user's disk (File System Access API)
   fileHandle?: FileSystemFileHandle;

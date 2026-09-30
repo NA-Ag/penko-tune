@@ -101,7 +101,7 @@ const fromStoredTrack = ({ fileBlob, streamUrl, ...rest }: StoredTrack): Track |
       ? fileBlob
       : new File([fileBlob], rest.name, { type: mimeType, lastModified: Date.now() });
 
-    return { ...rest, artist: rest.artist || 'Local File', file, url: URL.createObjectURL(file) };
+    return { ...rest, file, url: URL.createObjectURL(file) };
   }
 
   // Linked: the file is re-read from disk once folder permission is (re)granted

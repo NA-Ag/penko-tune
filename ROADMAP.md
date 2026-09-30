@@ -8,12 +8,23 @@ Penko-tune is a privacy-first player for music you own, with direct device-to-de
 
 - [x] Read embedded tags (ID3, Vorbis, MP4) for title, artist, album, track number and cover art
 - [x] Library search and sorting
-- [ ] Album / artist browse views
+- [x] Album / artist browse views
 - [x] Play queue ("Play next", "Add to queue")
 - [ ] Drag to reorder the queue
 - [x] Remember volume, shuffle, repeat and last-played track between sessions
 - [ ] Drag to reorder playlists
-- [ ] Gapless playback
+- [x] Gapless playback and crossfade
+- [x] Volume normalization (ReplayGain)
+- [x] Edit track info and lyrics
+
+## Practice & Education
+
+- [x] Playback speed with pitch preserved
+- [x] A-B looping and looping between chapter markers
+- [x] Synced lyrics (tags, .lrc files, pasted)
+- [x] Custom trackers and STUN/TURN relays for school networks
+- [x] Guides: [How it works](docs/HOW_IT_WORKS.md), [For teachers](docs/FOR_TEACHERS.md)
+- [ ] Frequency axis labels on the spectrum visualizer
 
 ## Phase 2: Keeping Your Music Safe
 
@@ -33,14 +44,15 @@ Penko-tune is a privacy-first player for music you own, with direct device-to-de
 ## Phase 4: Listen Together
 
 - [x] Live sessions: friends hear the host's playback over WebRTC, in stereo
-- [ ] Faster session discovery (currently ~15-30s through public trackers)
+- [x] Fast, reliable session discovery (Nostr relays and trackers in parallel)
 - [ ] Optional self-hosted tracker for people who don't want to use public ones
 
 ## Ongoing
 
-- Complete translations (Ukrainian, Korean and Chinese currently fall back to English for most strings)
+- [x] Complete translations for all 11 languages (enforced at compile time)
+- Native-speaker review of the translations
 - Accessibility: keyboard focus, screen reader labels
-- Automated tests for persistence and playback logic
+- [x] End-to-end tests in Chromium and Firefox (`npm run test:e2e`)
 
 ---
 
